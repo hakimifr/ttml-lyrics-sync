@@ -2,11 +2,21 @@
 """
 English syllable splitter for Apple Music TTML lyric files.
 
-Takes a span-synced (itunes:timing="Word") file and splits each
-whole-word <span> into N consecutive <span> elements, one per syllable,
-with NO space between them - while leaving the single space between
-separate words untouched, per the core rule in
-references/ttml-format.md section 8.
+Converts either sync form to syllable-level spans:
+  - line-synced: splits each plain-text <p> on whitespace, syllabifies
+    every token, and distributes the line duration evenly across all
+    resulting syllables;
+  - span-synced: splits each whole-word <span> into N consecutive
+    syllable spans within that span's existing duration.
+
+In both paths there is NO space between syllables of one word, while
+the original whitespace between separate words is preserved, per the
+core rule in references/ttml-format.md section 8.
+
+Untimed files (`itunes:timing="None"`) are rejected: they contain no
+line, word, or song-duration timings from which valid spans could be
+derived. Supply or author timing data first; never infer it from line
+order alone.
 
 Timing: real syllable timing has to come from listening to the vocal
 performance, so this script evenly divides each original word's
@@ -19,7 +29,6 @@ Usage:
     python3 syllabify_en.py <input.ttml> --check   # validate only, no write
 
 What it deliberately does NOT touch:
-  - Line-synced <p> elements (plain text, no spans) - passed through.
   - Multi-word spans, e.g. a single span reading "do it" (format
     reference section 7). These are a deliberate authoring choice for
     fast passages; splitting them would misrepresent the timing. They
@@ -41,11 +50,23 @@ script is used):
     and emphasis often differ from print/dictionary hyphenation.
   - Morpheme-boundary ambiguity (whether a vowel pair is a true
     diphthong or two separate morphemes) can't be resolved from text
-    alone.
+    alone. Known compound seams are handled by an explicit list
+    (MORPHEME_SUFFIXES) rather than a general rule, so the list covers
+    what's been seen so far, not every possible word.
   - Only English is implemented and verified. Do not use it on lyrics
     in other languages.
   - Always recommend a listen-through pass to fix both syllable
     boundaries and timing after running this.
+
+Silent-"e" handling, which is where most bad splits come from. All three
+cases drop the "e" as a syllable nucleus:
+  - word-final:        blame, there, gone, promise
+  - before "-s":       times, names, makes  (NOT sibilants, where "-es"
+                       is a real syllable: chan-ces, ro-ses, wa-shes)
+  - before "-ed":      involved, happened  (NOT after t/d, where "-ed"
+                       is a real syllable: wan-ted, nee-ded)
+A silent "e" mid-word at a compound seam ("something") is handled by
+splitting the compound first, so each part hits the word-final case.
 """
 
 import re
@@ -76,12 +97,31 @@ VOWEL_DIGRAPHS = {
 ENT_QUOT, ENT_APOS, ENT_AMP = "\x01", "\x02", "\x03"
 ENTITIES = (("&quot;", ENT_QUOT), ("&apos;", ENT_APOS), ("&amp;", ENT_AMP))
 
-# Both a raw apostrophe and an escaped one count as an apostrophe.
-APOSTROPHES = ("'", ENT_APOS)
+# Morpheme boundaries: compound second-elements and consonant-initial
+# suffixes, longest first. Splitting here before applying the vowel rules
+# fixes words whose silent "e" sits mid-word at the seam of a compound -
+# "something" would otherwise come out "so-me-thing" instead of
+# "some-thing", because the silent-e rule below only looks at the END of
+# a word. Splitting first lets each part ("some", "thing") run through
+# that rule on its own, which already handles it correctly. Same repair
+# for hope-ful, love-ly, care-less, move-ment, nine-teen.
+#
+# Kept deliberately short and high-confidence. Every entry has to be a
+# real morpheme seam a singer would phrase across, since a wrong entry
+# mis-splits every word that happens to end in those letters.
+MORPHEME_SUFFIXES = (
+    "bodies", "body", "thing", "things", "where", "times", "time",
+    "light", "night", "teen", "ment", "less", "ness", "some", "work",
+    "ful", "one", "day", "days", "how", "ly",
+)
+
+# Apple's text uses both ASCII and typographic apostrophes; AMLL may use
+# &apos;, represented internally by ENT_APOS while text is analysed.
+APOSTROPHES = ("'", "’", ENT_APOS)
 
 # Smallest syllable duration worth emitting. Below this, splitting would
 # produce timestamps that round to zero length, so the word is left whole.
-MIN_SYLLABLE_SECONDS = 0.001
+MIN_SYLLABLE_SECONDS = 0.000
 
 
 def encode(s):
@@ -111,8 +151,39 @@ def is_vowel(core, i):
     return False
 
 
+def split_morphemes(core):
+    """Split a letter run at known morpheme seams, longest match first.
+    Returns a list of parts (just [core] when nothing matches). Recurses
+    on the head so "everything" -> ["every", "thing"] and multi-seam
+    words still come apart."""
+    low = core.lower()
+    for suf in MORPHEME_SUFFIXES:
+        if len(low) > len(suf) + 1 and low.endswith(suf):
+            head = core[:-len(suf)]
+            # The head has to be able to stand alone as a syllable, i.e.
+            # contain a vowel. Guards against "thing" itself, or heads
+            # like "str" that are only a cluster.
+            if any(is_vowel(head, i) for i in range(len(head))):
+                return split_morphemes(head) + [core[-len(suf):]]
+    return [core]
+
+
 def syllabify_core(core):
     """core: a pure A-Za-z run. Returns a list of syllable strings."""
+    if not core:
+        return [core]
+
+    parts = split_morphemes(core)
+    if len(parts) > 1:
+        out = []
+        for p in parts:
+            out.extend(syllabify_run(p))
+        return out
+    return syllabify_run(core)
+
+
+def syllabify_run(core):
+    """Apply the vowel/consonant rules to a single morpheme."""
     if not core:
         return [core]
 
@@ -122,10 +193,31 @@ def syllabify_core(core):
 
     # Silent trailing "e" (blame, there, gone, promise) - drop it as a
     # nucleus rather than let it form its own syllable.
-    if len(core) >= 2 and core[-1].lower() == "e" and not is_vowel(core, len(core) - 2):
+    #
+    # The "or ...y" clause covers "-ye" words: bye, dye, rye, goodbye. A
+    # noninitial y normally counts as a vowel (shady, only), which would
+    # make the final e look like a second nucleus and split "good-by-e".
+    # For a FINAL e specifically, a preceding y behaves as the consonant
+    # frame, so the e is silent just as it is in "blame".
+    if len(core) >= 2 and core[-1].lower() == "e" \
+            and (not is_vowel(core, len(core) - 2) or core[-2].lower() == "y"):
         last_i = len(core) - 1
         if last_i in vowel_idx and len(vowel_idx) > 1:
             vowel_idx.remove(last_i)
+    # Silent "e" before a plural / 3rd-person "-s" (times, names, smiles,
+    # makes). Without this the silent e keeps its nucleus and produces an
+    # unsingable tail: "ti-mes", "na-mes", "ma-kes".
+    #
+    # The exception is sibilants, where "-es" genuinely IS a spoken
+    # syllable: chan-ces, voi-ces, ro-ses, wa-shes, boun-ces. Those are
+    # detected by the consonant before the "e" and left alone.
+    elif len(core) >= 4 and core[-1].lower() == "s" and core[-2].lower() == "e" \
+            and (not is_vowel(core, len(core) - 3) or core[-3].lower() == "y") \
+            and core[-3].lower() not in ("c", "s", "g", "x", "z") \
+            and core[-4:-2].lower() not in ("ch", "sh"):
+        e_i = len(core) - 2
+        if e_i in vowel_idx and len(vowel_idx) > 1:
+            vowel_idx.remove(e_i)
     # Silent "e" before past-tense "-ed" (involved, happened) - unless
     # preceded by t/d, where "-ed" IS its own syllable (wanted, needed).
     elif len(core) >= 3 and core[-2:].lower() == "ed" and not is_vowel(core, len(core) - 3) \
@@ -343,12 +435,66 @@ def set_attr(attrs, name, value):
 
 class Stats(object):
     def __init__(self):
+        self.lines_converted = 0
+        self.line_tokens = 0
+        self.line_syllables = 0
+        self.unconvertible_lines = 0
         self.words_split = 0
         self.syllables_made = 0
         self.multiword_spans = 0
         self.too_short_to_split = 0
         self.leaf_spans = 0
         self.bg_wrappers = 0
+
+
+def transform_line_p(attrs, inner, style, stats):
+    """Convert one plain-text line-synced <p> directly to syllable spans.
+
+    Whitespace chunks are retained verbatim. The line duration is divided
+    evenly across all emitted syllables; words that the heuristic leaves
+    unsplit count as one syllable span. This is placeholder timing only.
+    """
+    begin, end = get_attr(attrs, "begin"), get_attr(attrs, "end")
+    if begin is None or end is None:
+        stats.unconvertible_lines += 1
+        return "<p" + attrs + ">" + inner + "</p>"
+
+    chunks = re.split(r"(\s+)", inner)
+    token_data = []
+    total_syllables = 0
+    for chunk in chunks:
+        if not chunk or chunk.isspace():
+            token_data.append(("space", chunk))
+            continue
+        syllables = syllabify_word(chunk)
+        token_data.append(("word", syllables))
+        total_syllables += len(syllables)
+
+    if total_syllables == 0:
+        stats.unconvertible_lines += 1
+        return "<p" + attrs + ">" + inner + "</p>"
+
+    b, e = parse_time(begin), parse_time(end)
+    step = (e - b) / total_syllables
+    t0 = b
+    emitted = 0
+    out = []
+    for kind, value in token_data:
+        if kind == "space":
+            out.append(value)
+            continue
+        stats.line_tokens += 1
+        for syllable in value:
+            emitted += 1
+            t1 = e if emitted == total_syllables else t0 + step
+            out.append('<span begin="%s" end="%s">%s</span>' %
+                       (format_time(t0, style), format_time(t1, style),
+                        syllable))
+            t0 = t1
+
+    stats.lines_converted += 1
+    stats.line_syllables += total_syllables
+    return "<p" + attrs + ">" + "".join(out) + "</p>"
 
 
 def transform_nodes(nodes, style, stats):
@@ -418,11 +564,15 @@ def syllabify_text(text):
     def process_p(match):
         attrs, inner = match.group(1) or "", match.group(2)
         if "<span" not in inner:
-            return match.group(0)  # line-synced <p>: leave alone
+            return transform_line_p(attrs, inner, style, stats)
         return "<p" + attrs + ">" + render(
             transform_nodes(parse_nodes(inner), style, stats)) + "</p>"
 
-    return P_RE.sub(process_p, text), style, stats
+    result = P_RE.sub(process_p, text)
+    if stats.lines_converted:
+        result = re.sub(r'(\bitunes:timing=")Line(")', r'\1Word\2',
+                        result, count=1)
+    return result, style, stats
 
 
 # --------------------------------------------------------------------
@@ -492,17 +642,39 @@ def syllabify_file(in_path, out_path=None):
 
     timing = re.search(r'itunes:timing="([^"]*)"', original)
     if timing is None:
+        has_spans = bool(re.search(r'<p(?:\s[^>]*)?>.*?<span[\s>]',
+                                   original, re.DOTALL))
+        has_timed_lines = bool(re.search(
+            r'<p\s[^>]*\bbegin="[^"]+"[^>]*\bend="[^"]+"', original))
+        if has_spans:
+            suggestion = 'Timed spans establish itunes:timing="Word".'
+        elif has_timed_lines:
+            suggestion = 'Timed plain-text lines establish itunes:timing="Line".'
+        else:
+            suggestion = (
+                'The structure may be untimed ("None") or incomplete; '
+                'do not guess without the intended mode or source timings.')
         warnings.append(
-            "input has no itunes:timing attribute - Apple always sets it "
-            "(see format reference section 2 and the AMLL deviation table "
-            "in section 12). Consider restoring itunes:timing=\"Word\".")
+            "input has no itunes:timing attribute - Apple always sets it. "
+            + suggestion)
     elif timing.group(1) == "Line":
         warnings.append(
-            'input declares itunes:timing="Line"; a line-synced file has '
-            "no word spans to split. Nothing will change.")
+            'input declares itunes:timing="Line"; plain-text lines will '
+            'be converted to syllable spans and the value changed to '
+            'itunes:timing="Word".')
 
     new_text, style, stats = syllabify_text(original)
     problems = validate(original, new_text)
+
+    if timing is not None and timing.group(1) == "None":
+        problems.append(
+            'input declares itunes:timing="None" and contains no timing '
+            'data. Timed syllable spans cannot be generated without '
+            'separately authored timings.')
+    elif timing is not None and timing.group(1) not in ("Line", "Word"):
+        problems.append(
+            'unsupported itunes:timing value %r; Apple uses only '
+            '"None", "Line", or "Word".' % timing.group(1))
 
     if out_path and not problems:
         with open(out_path, "w", encoding="utf-8") as f:
@@ -523,6 +695,12 @@ def main(argv):
     new_text, style, stats, problems, warnings = syllabify_file(in_path, out_path)
 
     print("timing style detected: %s" % style)
+    print("line <p>s converted:    %d  (%d token(s), %d syllable span(s))"
+          % (stats.lines_converted, stats.line_tokens,
+             stats.line_syllables))
+    if stats.unconvertible_lines:
+        print("line <p>s left plain:   %d  (missing timing or no tokens)"
+              % stats.unconvertible_lines)
     print("word spans examined:   %d" % stats.leaf_spans)
     print("words split:           %d  (into %d syllable spans)"
           % (stats.words_split, stats.syllables_made))

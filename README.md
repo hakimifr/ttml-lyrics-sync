@@ -39,15 +39,15 @@ SKILL.md                     entry point — workflows and the easy-to-get-wrong
 references/ttml-format.md    the full format reference (14 sections)
 scripts/syllabify_en.py      English word→syllable splitter, with self-validation
 official_ttml_samples/
+  no_timing/                 untimed output from Apple's API
   line/                      3 line-synced files from Apple's API
   word_syllable/             4 span-synced files from Apple's API
 amll_edited_ttml/            3 AMLL editor outputs — counter-examples, not models
 ```
 
-The sample directories aren't decoration. When a structural question isn't
-settled by the reference doc, the intended workflow is to **grep the official
-samples** rather than reason from the TTML spec. Section 13 of the reference
-indexes what each file demonstrates.
+The reference is self-contained for normal skill use. The sample directories
+are builder/regression evidence for maintaining the skill or investigating a
+new format shape; agents should not need to read them during ordinary tasks.
 
 ## Using it as a skill
 
@@ -68,13 +68,15 @@ python3 scripts/syllabify_en.py input.ttml output.ttml
 python3 scripts/syllabify_en.py input.ttml --check    # dry run, no write
 ```
 
-It splits whole-word `<span>`s into per-syllable spans, validates its own
-output, and **refuses to write anything if a check fails**. A successful run
+It converts timed plain-text lines or whole-word `<span>`s into per-syllable
+spans, validates its own output, and **refuses to write anything if a check fails**. A successful run
 means XML well-formedness, `<p>` count, total text content, span count, x-bg
 wrappers, `itunes:key` and `ttm:agent` all survived intact.
 
-It deliberately leaves alone: line-synced `<p>`s, multi-word spans, `x-bg`
-wrapper spans, inter-span whitespace, and the file's timing format.
+It deliberately leaves alone multi-word spans, `x-bg` wrapper spans,
+inter-span whitespace, and the file's timing format. Untimed
+`itunes:timing="None"` files are refused because they provide no durations
+from which valid timed spans can be generated.
 
 **The timings it produces are evenly-divided placeholders, not real sync.** No
 audio is analyzed. Both the split points and the timings need a
@@ -87,11 +89,11 @@ listen-through pass. English only.
 The reference doc is the real answer; this is the short version of what people
 get wrong.
 
-**Sync level lives in the structure, not one attribute.** `itunes:timing` is
-always present and is exactly `"Line"` or `"Word"` — there is no `"Syllable"`
-value, so a syllable-synced file declares `"Word"`. It reliably tells you line
-vs. span sync; it can't tell you word vs. syllable, because that isn't a file
-property.
+**Timing mode and structure agree.** `itunes:timing` is always present and is
+exactly `"None"`, `"Line"`, or `"Word"` — there is no `"Syllable"` value, so
+a syllable-synced file declares `"Word"`. `None` has no timing attributes and
+requires manual scrolling; `Line` times each plain-text `<p>`; `Word` uses
+timed spans. Span spacing distinguishes word from syllable granularity.
 
 **Space between spans is structural.** No space = parts of the same word. One
 space = a new word. That's the only signal — not timing continuity, not
@@ -121,8 +123,8 @@ background vocals, which need spans to attach to.
 *no* `begin`/`end`, always placed last inside its `<p>` regardless of when it
 actually occurs. Verified across all 56 instances in the corpus.
 
-**Apple uses raw `'` and `"` in text**, not `&apos;`/`&quot;` — 237 raw
-apostrophes and zero entities across the official corpus.
+**Apple uses raw apostrophes and `"` in text**, not
+`&apos;`/`&quot;`; both ASCII `'` and typographic `’` occur.
 
 **Timing format is a per-file convention.** Bare seconds under a minute
 switching to `M:SS.mmm` above it (Apple's dominant style), always-padded
@@ -133,8 +135,8 @@ strips them, so parse 1–3 decimals but emit 3.
 
 ### Apple's documentation is wrong about `itunes:songPart`
 
-Apple's published docs call it `itunes:song-part`. Across every official file,
-it is camelCase **`songPart`** — not one instance of the hyphenated form. It's
+Apple's published docs call it `itunes:song-part`. Across every observed
+official occurrence, it is camelCase **`songPart`** — not one instance of the hyphenated form. It's
 optional, appears only on `<div>` (never `<p>`), and takes one of eight
 values: `Verse`, `Chorus`, `PreChorus`, `Bridge`, `Intro`, `Outro`, `Refrain`,
 `Instrumental`. The last two are legal but haven't turned up in a sampled file
@@ -178,7 +180,7 @@ normalization workflow.
 
 ## Scope and caveats
 
-- The format reference is grounded in **7 official files**. It describes what
+- The format reference is grounded in **8 official files**. It describes what
   Apple demonstrably does, not a specification. Where something is convention
   rather than a hard rule, the doc says so.
 - The AMLL deviation list comes from **3 sample files** and is not a spec of

@@ -2,8 +2,8 @@
 
 This describes the TTML lyric format **as Apple Music actually emits it**,
 verified against the files in `official_ttml_samples/` (pulled directly
-from Apple's API): three line-synced files and four word/syllable-synced
-files. Every claim below was checked against that corpus, not assumed
+from Apple's API): one untimed file, three line-synced files, and four
+word/syllable-synced files. Every claim below was checked against that corpus, not assumed
 from the TTML spec in the abstract — this format has Apple-specific
 conventions layered on top of generic TTML.
 
@@ -15,23 +15,49 @@ live in `amll_edited_ttml/`. When this document says "official", it means
 Apple's own output.
 
 Structural example snippets below use invented placeholder words rather
-than real lyrics; for real examples, open the sample files directly.
+than real lyrics. **This reference is the operational source of truth:**
+an agent using the skill should not need to open the bundled TTML samples
+for ordinary inspection, editing, conversion, or generation tasks. The
+samples are builder/regression evidence for extending or challenging this
+reference, not a prerequisite for using it.
+
+## Contents
+
+1. Timing modes and sync granularity
+2. Root element, namespaces, and required attributes
+3. Head, agents, and metadata
+4. Body and div sections
+5. Lyric-line (`p`) structure
+6. Untimed and line-synced content
+7. Word-synced content
+8. Syllable spacing rule
+9. Timestamp formats
+10. Background vocals
+11. Text characters and XML entities
+12. AMLL editor deviations
+13. Builder-only sample index
+14. Pre-handback checklist
 
 ---
 
-## 1. The three sync levels
+## 1. Timing modes and sync granularity
 
-| Level | What gets its own timestamp | Typical use |
+| `itunes:timing` / level | What gets its own timestamp | Typical use |
 |---|---|---|
+| **`None` / Untimed** | Nothing | Static lyrics; the user scrolls manually |
 | **Line** | Each full line of text | Simplest, lowest-effort lyric files |
 | **Word** | Each individual word | Standard karaoke-style highlighting |
 | **Syllable** | Each syllable within a word | Apple Music's precise "bouncing ball" style |
 
-Two things about this table that the format itself does *not* enforce:
+There are three root timing values but four useful granularity labels:
 
-- **`itunes:timing` only distinguishes Line from Word.** There is no
-  `"Syllable"` value. A syllable-synced file declares
+- **`itunes:timing` is exactly `"None"`, `"Line"`, or `"Word"`.** There
+  is no `"Syllable"` value. A syllable-synced file declares
   `itunes:timing="Word"` — see §2.
+- **`None` is intentional, not malformed Line sync.** Its `<p>` elements
+  contain plain lyric text, but there are no `begin`/`end` timestamps on
+  `<p>` or `<div>` and no `dur` on `<body>`. The client cannot
+  auto-scroll or highlight against playback; the user scrolls manually.
 - **Word and syllable sync are not separate file types in practice.**
   They are two ends of a spectrum that coexist inside a single file: the
   same song routinely has some words split into syllable spans, some
@@ -51,16 +77,16 @@ Two things about this table that the format itself does *not* enforce:
     xml:lang="en">
 ```
 
-Across all seven official samples the `<tt>` attribute set is
-**consistent, with one conditional**:
+Across all eight official samples the `<tt>` attribute set is
+**consistent, with one conditional namespace**:
 
-| Attribute | Line-synced | Word/syllable-synced |
-|---|---|---|
-| `xmlns` (default TTML ns) | Always | Always |
-| `xmlns:itunes` | Always | Always |
-| `xmlns:ttm` | **Only if the file uses `ttm:*`** | Always |
-| `itunes:timing` | Always | Always |
-| `xml:lang` | Always | Always |
+| Attribute | Untimed (`None`) | Line-synced | Word/syllable-synced |
+|---|---|---|---|
+| `xmlns` (default TTML ns) | Always | Always | Always |
+| `xmlns:itunes` | Always | Always | Always |
+| `xmlns:ttm` | Only if the file uses `ttm:*` | Only if the file uses `ttm:*` | Always in the corpus |
+| `itunes:timing` | `"None"` | `"Line"` | `"Word"` |
+| `xml:lang` | Always | Always | Always |
 
 - **`xmlns:ttm` is present whenever the file references anything in that
   namespace, at any sync level.** For word/syllable files that is always,
@@ -88,20 +114,39 @@ Across all seven official samples the `<tt>` attribute set is
   then `xml:lang`. Order is not semantically meaningful, but matching it
   costs nothing and keeps diffs against Apple's own files clean.
 
-### `itunes:timing` — required, and it means what it says
+### `itunes:timing` — required, with three values
 
 **This attribute is always present on official files, and its value is
-always one of exactly two strings:**
+one of exactly three strings:**
 
+- `itunes:timing="None"` — the `<p>` elements contain plain text and no
+  playback timings exist. `<body>` has no `dur`; `<div>` and `<p>` have
+  no `begin`/`end`. Lyrics are manually scrolled.
 - `itunes:timing="Line"` — the `<p>` elements contain plain text.
 - `itunes:timing="Word"` — the `<p>` elements contain `<span>` elements.
   **This covers both word-synced and syllable-synced files.** There is
-  no third value.
+  no `"Syllable"` value.
 
-So `itunes:timing` reliably tells you whether the file is line-synced or
-span-synced. It does **not** tell you how finely the spans are divided —
-that is a per-word authoring decision within a `"Word"` file, readable
-only from the actual span structure (§7–§8).
+So `itunes:timing` reliably distinguishes untimed, line-synced, and
+span-synced files. It does **not** tell you how finely `"Word"` spans
+are divided — that is a per-word authoring decision, readable only from
+the actual span structure (§7–§8).
+
+### Mode consistency matrix
+
+Use all three signals together when inspecting or creating a file:
+
+| Mode | `<body>` | `<div>` | `<p>` content |
+|---|---|---|---|
+| `None` | No `dur` | No `begin`/`end`; preserve other metadata | Plain text; no `begin`/`end`; no spans; preserve other metadata |
+| `Line` | `dur` present | `begin`/`end` present | Plain text with `begin`/`end` on `<p>` |
+| `Word` | `dur` present | `begin`/`end` present | `<p begin end>` containing timed spans |
+
+If these disagree, the file is inconsistent. Do not “repair” it by
+guessing: preserve lyric text, identify the conflicting fields, and ask
+for the intended mode or source timing data. The one common recoverable
+case is AMLL span output missing only `itunes:timing`; restore `"Word"`
+when timed spans unambiguously establish the mode (§12).
 
 If you encounter a span-synced file with `itunes:timing` **missing**,
 it did not come from Apple — the AMLL editor omits it (§12). Restore it
@@ -110,7 +155,7 @@ format variant.
 
 ### `xml:lang` — required
 
-Present on every official sample. One caveat worth knowing: the value
+Present on all eight official samples. One caveat worth knowing: the value
 reflects Apple's catalogue metadata, and can disagree with the actual
 language of the lyrics — `9 to 5 (feat. khodi) - Lucidrari.ttml` has
 Malay lyrics and `xml:lang="en"`. Don't "correct" it to match the lyrics
@@ -216,10 +261,10 @@ vice versa. See §10 for the one thing line sync genuinely cannot express.
   correct and expected, not a typo: it sits inside the ttml-namespaced
   `<metadata>` but belongs to the iTunes schema.
 - **`leadingSilence="..."`** — optional attribute, observed as `"0"`,
-  `"0.100"`, `"0.180"`, `"0.200"`. Present on 5 of 7 official samples.
+  `"0.100"`, `"0.180"`, `"0.200"`. Present on 5 of 8 official samples.
   Preserve it when editing; the AMLL editor drops it.
 - **`<translations/>`** — an empty placeholder element. Present on **all
-  seven** official samples, so treat it as standard, not optional. (The
+  eight** official samples, so treat it as standard, not optional. (The
   AMLL editor keeps it on line-synced output but drops it on span-synced
   output.)
 - **`<songwriters><songwriter>Name</songwriter>…</songwriters>`** — one
@@ -241,28 +286,42 @@ vice versa. See §10 for the one thing line sync genuinely cannot express.
 ### `<body>`
 
 - `dur="..."` — total song duration, following the file's timing
-  convention (§9). Present on every sample.
+  convention (§9). Required for `itunes:timing="Line"` and `"Word"`;
+  absent in the observed `"None"` shape because the file contains no
+  playback timing information.
 - `ttm:agent="..."` — **optional default agent for the whole song**,
   observed on `Luther` and `You` (both `ttm:agent="v2"`). A `<p>` with
   its own `ttm:agent` overrides it. Preserve this attribute if present;
   don't add one that wasn't there.
+
+Agent inheritance is most-specific-wins: `<p ttm:agent>` overrides
+`<div ttm:agent>`, which overrides `<body ttm:agent>`. Every referenced
+ID must have a matching `<ttm:agent xml:id="...">` declaration in
+`<head>`.
 
 ### `<div>` — song sections
 
 Observed attribute shapes across the official corpus:
 
 ```
+no attributes                             (7 — untimed)
 begin end                                (9 occurrences)
 begin end itunes:songPart                (29)
 begin end itunes:songPart ttm:agent      (17)
 ```
 
-- **`itunes:songPart` is optional** — 9 of 55 official `<div>`s have
-  none, and one whole file (`9 to 5`) uses none at all.
+- For `itunes:timing="None"`, a section may be plain `<div>` with no
+  attributes. Its purpose is still to group lyric lines; it carries no
+  playback interval and no observed `itunes:songPart`.
+
+- **`itunes:songPart` is optional** — 9 of 55 timed official `<div>`s
+  have none, and one whole timed file uses none at all. The observed
+  untimed file has seven attribute-free `<div>`s.
 - **Note the attribute name: `itunes:songPart`, camelCase.** Apple's
   published documentation calls it `itunes:song-part` (kebab-case).
-  **The documentation is wrong.** Across every official file pulled from
-  Apple's API, it is `songPart` — not one instance of `song-part`. Bear
+  **The documentation is wrong.** Across every observed occurrence in
+  files pulled from Apple's API, it is `songPart` — not one instance of
+  `song-part`. Bear
   this in mind if consulting Apple's docs again for anything else in
   this format; they have been observed to be inaccurate.
 - **`itunes:songPart` appears only on `<div>`, never on `<p>`** (0
@@ -291,9 +350,9 @@ begin end itunes:songPart ttm:agent      (17)
   `Popular` uses one `<div>` per section. Both are valid — match
   whatever the file you're editing already does, and don't merge or
   split `<div>`s during a sync-level conversion.
-- A `<div>`'s `begin`/`end` spans the min/max of the `<p>` elements it
-  contains. Treat that as observed convention rather than something to
-  recompute unprompted.
+- In timed modes, a `<div>`'s `begin`/`end` spans the min/max of the
+  `<p>` elements it contains. Treat that as observed convention rather
+  than something to recompute unprompted. Untimed `<div>`s have neither.
 
 ---
 
@@ -302,13 +361,15 @@ begin end itunes:songPart ttm:agent      (17)
 Observed attribute shapes:
 
 ```
+no attributes                     (28 occurrences — untimed)
 begin end                        (95 occurrences — one line-synced file)
 begin end itunes:key             (47 — one line-synced file)
 begin end itunes:key ttm:agent   (273 — all 4 word/syllable files, plus 1 line-synced)
 ```
 
-All three shapes occur on line-synced files, so **`<p>` attributes tell
-you nothing about sync level** — only the `<p>` *content* does (§6–§8).
+The no-attribute shape identifies the observed untimed mode. The other
+three all occur on line-synced files, so attributes alone do not
+distinguish line from word/syllable sync — inspect the content (§6–§8).
 
 ```xml
 <p begin="18.030" end="21.740" itunes:key="L2" ttm:agent="v1">
@@ -316,7 +377,8 @@ you nothing about sync level** — only the `<p>` *content* does (§6–§8).
 </p>
 ```
 
-- **`begin` / `end`** — the line's overall timing. Always present.
+- **`begin` / `end`** — the line's overall timing. Required for Line and
+  Word modes; absent for `itunes:timing="None"`.
 - **`itunes:key="L1"`, `"L2"`, `"L3"`…** — sequential line numbering
   across the **entire song**, not reset per `<div>`. Always present on
   every `<p>` in word/syllable files. On line-synced files it is
@@ -332,7 +394,49 @@ you nothing about sync level** — only the `<p>` *content* does (§6–§8).
 
 ---
 
-## 6. Line-synced `<p>` content
+## 6. Untimed and line-synced `<p>` content
+
+### Untimed (`itunes:timing="None"`)
+
+Canonical shape:
+
+```xml
+<tt xmlns="http://www.w3.org/ns/ttml"
+    xmlns:itunes="http://music.apple.com/lyric-ttml-internal"
+    itunes:timing="None"
+    xml:lang="en">
+  <head>
+    <metadata>
+      <iTunesMetadata xmlns="http://music.apple.com/lyric-ttml-internal">
+        <translations/>
+        <songwriters><songwriter>Full Name</songwriter></songwriters>
+      </iTunesMetadata>
+    </metadata>
+  </head>
+  <body><div><p>Static lyric line</p></div></body>
+</tt>
+```
+
+- `<body>` has no `dur`.
+- `<div>` has no `begin`/`end`. The observed file has no other `<div>`
+  attributes, but treat that as evidence rather than a prohibition:
+  preserve non-timing metadata such as `itunes:songPart` or `ttm:agent`
+  if an untimed file already contains it.
+- `<p>` has no `begin`/`end` and contains plain text with no spans. The
+  observed file also lacks `itunes:key` and `ttm:agent`; preserve either
+  if encountered rather than stripping it merely because the mode is
+  untimed.
+- The client has no timing data for automatic scrolling or highlighting.
+  The user scrolls the lyrics manually.
+- Do **not** change `"None"` to `"Line"` merely because `<p>` contains
+  plain text. A `"Line"` file must also provide line timings.
+- Do **not** fabricate timings from the line order or track duration.
+  Conversion to Line or Word/syllable sync requires separately authored
+  timing data (normally listening to the audio). Text can be prepared or
+  syllabified independently, but it cannot become valid timed TTML from
+  this file alone.
+
+### Line-synced (`itunes:timing="Line"`)
 
 ```xml
 <p begin="00:00:14.630" end="00:00:18.030">Some example lyric line</p>
@@ -341,6 +445,10 @@ you nothing about sync level** — only the `<p>` *content* does (§6–§8).
 
 - **Plain text directly inside `<p>`. No `<span>` elements at all.**
 - No word- or syllable-level timing — the whole line lights up at once.
+- It can be converted directly to syllable sync by tokenizing each line
+  and distributing its duration across the resulting spans. Such a
+  conversion changes `<tt>`'s `itunes:timing="Line"` to `"Word"`; the
+  generated timings are placeholders and require manual resyncing.
 - **`itunes:key` and `ttm:agent` are both available here** (§5), as the
   second example shows. Line sync means "no per-word timing", not "no
   metadata".
@@ -366,10 +474,16 @@ you nothing about sync level** — only the `<p>` *content* does (§6–§8).
 
 This is important and easy to get wrong. **A single span may cover two
 or more whole words** when the delivery is fast enough that finer timing
-would be pointless. See `official_ttml_samples/word_syllable/Luther -
-Kendrick Lamar.ttml`, where **80 of 337 spans contain more than one
-word** — spans holding text like `do it`, `you a`, `dreams and`,
-`in front of`. The space inside such a span is ordinary text content, not
+would be pointless. For example, this is a verbatim extract from
+`official_ttml_samples/word_syllable/Luther - Kendrick Lamar.ttml`:
+
+```xml
+<span begin="14.625" end="15.121">drop it</span> <span begin="15.121" end="15.505">like it's</span>
+```
+
+Each element above is one timed unit even though its text contains a
+space. Official data also includes spans such as `you a`, `dreams and`,
+and `in front of`. A space *inside* a span is ordinary text content, not
 a separator between two timed units.
 
 The reverse also happens: a stylized token can be split across spans
@@ -445,7 +559,7 @@ what the file already uses and match it exactly.** Do not assume one
 universal format, and do not convert a file from one style to another.
 
 - **Style A — bare seconds under a minute, `M:SS.mmm` at and above one
-  minute.** The dominant official style: 5 of 7 official samples,
+  minute.** The dominant official style: 5 of the 7 timed official samples,
   including every word/syllable file.
   - Under 60s: `"14.630"`, `"0.138"`, `"58.272"` — no minutes prefix.
   - 60s and over: `"1:01.000"`, `"5:57.630"` — seconds zero-padded to
@@ -517,6 +631,7 @@ zero-padding, and the switch point if the file uses Style A.
 
   | Sync level | `ttm:agent` singers | `ttm:role="x-bg"` background vocals |
   |---|---|---|
+  | Untimed (`None`) | Not observed; preserve if encountered | **No** — no spans |
   | Line | **Yes** — confirmed in the corpus (`#icanteven`) | **No** |
   | Word | Yes | Yes |
   | Syllable | Yes | Yes |
@@ -531,8 +646,9 @@ zero-padding, and the switch point if the file uses Style A.
 ## 11. Text content: quotes, apostrophes, and entities
 
 **Apple's official files use raw characters, not XML entities.** Across
-all seven official samples: **zero** occurrences of `&apos;`, `&quot;`,
-or `&amp;`, against 237 raw `'` and 18 raw `"` in text content.
+all eight official samples: **zero** occurrences of `&apos;`, `&quot;`,
+or `&amp;`, against 238 raw ASCII apostrophes (`'`), 11 typographic
+apostrophes (`’`), and 18 raw `"` in text content.
 
 ```xml
 <span begin="17.602" end="17.802">don't</span>
@@ -544,9 +660,9 @@ This is valid XML — only `<` and `&` strictly require escaping in text
 content; `'` and `"` do not (attribute values use `"` delimiters, so a
 raw `"` in *text* is unambiguous). Apple takes advantage of that.
 
-- Apostrophes are the plain ASCII `'` (U+0027). **No typographic
-  apostrophes** (U+2019 `’`) appear anywhere in the corpus — don't
-  introduce them.
+- Both plain ASCII `'` (U+0027) and typographic `’` (U+2019) occur in
+  official text. Preserve the form already present; do not normalize
+  apostrophes during an unrelated edit.
 - The AMLL editor escapes apostrophes to `&apos;` (§12). That is
   well-formed and renders identically, so it isn't a correctness bug,
   but it doesn't match Apple's output.
@@ -558,9 +674,8 @@ letters or vowels (syllabification, word counting) must handle **both**
 forms:
 
 1. **Raw apostrophes** are ordinary text characters sitting inside words
-   — `don't`, `goin'`, `'cause`. Code that assumes a token is a clean
-   `[A-Za-z]+` run will mis-handle every contraction in a real Apple
-   file.
+   — `don't`, `I’m`, `goin'`, `'cause`. Code that assumes a token is a
+   clean `[A-Za-z]+` run will mis-handle contractions in real Apple files.
 2. **Entity references, where present, are atomic opaque units.** Never
    scan their raw characters: `&quot;` contains the letters `q`, `u`,
    `o`, `t`, none of which belong to the word. Substitute each entity
@@ -579,13 +694,13 @@ Apple-conformant. Comparing `amll_edited_ttml/` against
 
 | # | Deviation | Correct Apple behaviour |
 |---|---|---|
-| 1 | **`itunes:timing` missing** on span-synced output (`word.ttml` has none) | Always present; `"Word"` for span-synced, `"Line"` for line-synced (§2) |
+| 1 | **`itunes:timing` missing** on span-synced output (`word.ttml` has none) | Always present; `"None"` for untimed, `"Line"` for line-synced, `"Word"` for span-synced (§2) |
 | 2 | **`xml:lang` missing** on span-synced output (`word.ttml`, `syllable.ttml`) | Always present (§2) |
 | 3 | **`xmlns:tts` declared but never used** | Never declared — no official file references the styling namespace |
 | 4 | **`xmlns:amll="http://www.example.com/ns/amll"` declared** | Never declared — a placeholder namespace with no meaning to Apple Music |
 | 5 | **`itunes:songPart` stripped from every `<div>`** (0 across all three files) | Optional, but Apple emits it on most `<div>`s (§4) — once dropped, the section labels are unrecoverable without re-authoring |
 | 6 | **`begin`/`end` added to the `ttm:role="x-bg"` wrapper span** | Wrapper carries `ttm:role` only; timing lives on inner spans (§10) |
-| 7 | **`<translations/>` dropped** on span-synced output | Present on all seven official samples (§3) |
+| 7 | **`<translations/>` dropped** on span-synced output | Present on all eight official samples (§3) |
 | 8 | **`leadingSilence` dropped** from `<iTunesMetadata>` | Preserved when the source had it (§3) |
 | 9 | **Apostrophes escaped to `&apos;`** | Raw `'` (§11) |
 | 10 | **Namespace declaration order shuffled**, `itunes` last | `xmlns`, `xmlns:itunes`, `xmlns:ttm` (§2) — cosmetic |
@@ -615,10 +730,17 @@ Notes on using this table:
 
 ---
 
-## 13. Sample files bundled with this skill
+## 13. Builder-only sample index
+
+**Agents using this skill should rely on §§1–12 and §14, not on these
+files.** Open samples only when maintaining the skill, regression-testing
+a parser or generator, or investigating a genuinely undocumented shape.
+If an ordinary TTML task appears to require sample inspection, improve
+this reference afterward so the same lookup is unnecessary next time.
 
 | Path | What it demonstrates |
 |---|---|
+| `official_ttml_samples/no_timing/Better In Pieces - StaJe.ttml` | Untimed `itunes:timing="None"`: plain `<body>`, `<div>`, and `<p>` with no timing attributes; manual scrolling; typographic apostrophes |
 | `official_ttml_samples/line/9 to 5 (feat. khodi) - Lucidrari.ttml` | Line sync, Style C timing, no `itunes:key`, no `songPart`, no agents, single `<div>` for the whole song, `xml:lang` disagreeing with the lyric language |
 | `official_ttml_samples/line/How Long - Charlie Puth.ttml` | Line sync, Style A timing, `itunes:key` on every `<p>`, `songPart` on `<div>`s, no agents, raw `"` in text |
 | `official_ttml_samples/line/#icanteven … - The Neighbourhood.ttml` | **Line sync *with* agents** — `xmlns:ttm`, a `<ttm:agent>` carrying a `<ttm:name>`, `ttm:agent` on every `<p>`; Style B timing with stripped trailing zeros |
@@ -630,8 +752,8 @@ Notes on using this table:
 | `amll_edited_ttml/word.ttml` | AMLL word output — missing `itunes:timing` **and** `xml:lang`, `&apos;` escaping |
 | `amll_edited_ttml/syllable.ttml` | AMLL syllable output — missing `xml:lang`, x-bg wrapper with `begin`/`end`, Style B timing |
 
-Consult these directly when a question isn't settled by this document —
-they are the evidence base for every claim in it.
+These files are evidence and regression fixtures, not runtime
+documentation for agents performing ordinary TTML work.
 
 ---
 
@@ -642,18 +764,18 @@ Before handing back any edited, generated, or converted TTML file:
 - [ ] The file still parses as well-formed XML.
 - [ ] The number of `<p>` elements is unchanged (unless the task was
       explicitly to add or remove lines).
-- [ ] Every `<p>`'s original `begin`, `end`, `itunes:key`, and
-      `ttm:agent` are preserved exactly, unless the task was to change
-      them.
+- [ ] Every attribute originally present on `<body>`, `<div>`, and `<p>`
+      is preserved exactly unless the task required changing it. For
+      `itunes:timing="None"`, confirm timing attributes were not invented.
 - [ ] `itunes:timing` and `xml:lang` are present on `<tt>`, with
-      `itunes:timing` being exactly `"Line"` or `"Word"` and matching
-      the actual `<p>` content structure.
+      `itunes:timing` being exactly `"None"`, `"Line"`, or `"Word"` and
+      matching both content and timing presence (§1–§2).
 - [ ] `xmlns:ttm` is declared if and only if something in the file uses
       the `ttm:` prefix — including on line-synced files with agents.
 - [ ] No `xmlns:tts` or `xmlns:amll` declarations were introduced.
 - [ ] Any `<ttm:name>` inside a `<ttm:agent>` is preserved, and an
       agent's open-tag form was not collapsed to self-closing.
-- [ ] Space appears **only** between separate timed tokens, **never**
+- [ ] In span-synced content, space appears **only** between separate timed tokens, **never**
       between spans that form one word — and existing spacing (including
       any incidental double spaces) is preserved byte-for-byte.
 - [ ] Multi-word spans (§7) were left intact, not split apart.
@@ -670,5 +792,6 @@ Before handing back any edited, generated, or converted TTML file:
 - [ ] `<translations/>`, `leadingSilence`, `<songwriters>`, and the
       rest of `<head>` are untouched unless the task required changing
       them.
-- [ ] The file's existing timing-format style (§9) is matched, not
-      replaced with a different one.
+- [ ] For timed files, the existing timing-format style (§9) is matched,
+      not replaced with a different one. For `"None"`, no timestamps or
+      `dur` were fabricated.

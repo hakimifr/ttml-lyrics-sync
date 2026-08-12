@@ -1,6 +1,17 @@
 ---
 name: ttml-lyrics-sync
-description: Work with Apple Music TTML lyric files (.ttml) at any sync level - line-synced, word-synced, or syllable-synced. Use this whenever a .ttml lyric file is mentioned, uploaded, or being created, or when the task involves itunes:timing, itunes:key, itunes:songPart, ttm:agent singers (person/group/other), ttm:role=x-bg background vocals, converting a lyric file between sync levels, splitting word-synced lyrics into syllables, or cleaning up AMLL-editor output so it conforms to Apple's format. This skill's reference doc records the exact structure Apple actually emits - verified against real files pulled from Apple's API, including places where Apple's own published documentation is wrong - plus namespaces, required attributes, timing-format conventions, and the critical whitespace rule that distinguishes a new syllable from a new word. Consult it before writing or editing any TTML lyric markup, since small formatting mistakes (a misplaced space, a dropped attribute) silently corrupt the file's meaning without causing a parse error. Also bundles real sample files and a heuristic English syllable-splitter script.
+description: >-
+  Work with Apple Music TTML lyric files (.ttml) in untimed
+  (itunes:timing=None), line-synced, word-synced, or syllable-synced form.
+  Use whenever a .ttml lyric file is mentioned, inspected, edited,
+  converted, or created; when handling itunes:timing/key/songPart,
+  ttm:agent singers, ttm:role=x-bg background vocals, timing formats,
+  span whitespace, or AMLL-editor cleanup; or when converting English
+  line/word sync to syllable spans. Read the bundled format reference
+  before markup changes: it is self-contained operational documentation
+  of Apple's actual format, including where Apple's published docs are
+  wrong. The sample TTML files are builder/regression fixtures, not
+  required reading for normal skill use.
 ---
 
 # Apple Music TTML Lyrics
@@ -9,27 +20,25 @@ description: Work with Apple Music TTML lyric files (.ttml) at any sync level - 
 
 **Read `references/ttml-format.md` first.** It documents the exact,
 verified structure of this format - namespaces and required attributes,
-`<head>`/`<body>`/`<div>`/`<p>` layout, agents, song parts, the three
-sync levels, background vocals, text escaping, and (critically) the
+`<head>`/`<body>`/`<div>`/`<p>` layout, agents, song parts, untimed and
+timed modes, background vocals, text escaping, and (critically) the
 whitespace convention that distinguishes a new syllable from a new word.
 Getting that whitespace rule wrong silently changes what the file means
 without causing an XML parse error, so read it in full rather than
 skimming - do this even if you think you already know TTML, since this
 format has Apple-specific conventions layered on top of generic TTML.
 
-**Apple's format is the target.** This skill treats the files in
-`official_ttml_samples/` - pulled straight from Apple's API - as ground
-truth. It is not an "AMLL-style" skill: the AMLL editor is a useful
+**Apple's format is the target.** The reference was derived from files
+pulled straight from Apple's API. It is not an "AMLL-style" skill: the AMLL editor is a useful
 authoring tool but its output deviates from Apple's format in several
 specific ways, and this skill's job is to produce Apple-conformant files,
 not to imitate the editor.
 
 **Note on Apple's published documentation:** it has been observed to be
 wrong about this format. The clearest example is `itunes:songPart`, which
-Apple's docs call `itunes:song-part` - across every official file, it is
-camelCase `songPart`, without exception. If you consult Apple's docs for
-anything here, verify the claim against the sample files before acting
-on it; the samples win.
+Apple's docs call `itunes:song-part`; Apple's actual files use camelCase
+`itunes:songPart` in every observed occurrence. Trust the reference's verified rules over the generic
+TTML spec or Apple's prose documentation.
 
 ## What this skill covers
 
@@ -37,8 +46,8 @@ on it; the samples win.
    sync level, agents, song parts, and structure.
 2. **Editing** a file (fixing a word, adjusting a timestamp, adding a
    line) without breaking its structural conventions.
-3. **Converting word-synced lyrics to syllable-synced** using the bundled
-   English heuristic splitter (`scripts/syllabify_en.py`).
+3. **Converting line- or word-synced lyrics to syllable-synced** using the
+   bundled English heuristic splitter (`scripts/syllabify_en.py`).
 4. **Normalizing AMLL editor output** back to Apple's format.
 5. **Creating a new file from scratch** at any sync level.
 
@@ -46,25 +55,35 @@ on it; the samples win.
 
 | Directory | What it is | How to use it |
 |---|---|---|
-| `official_ttml_samples/line/` | 3 line-synced files from Apple's API | Ground truth for line sync |
-| `official_ttml_samples/word_syllable/` | 4 span-synced files from Apple's API | Ground truth for word/syllable sync, agents, x-bg |
-| `amll_edited_ttml/` | 3 files produced by the AMLL editor | Counter-examples - what non-conformant output looks like |
+| `official_ttml_samples/no_timing/` | Untimed output from Apple's API | Builder/regression fixture for `itunes:timing="None"` |
+| `official_ttml_samples/line/` | Line-synced output from Apple's API | Builder/regression fixtures |
+| `official_ttml_samples/word_syllable/` | Span-synced output from Apple's API | Builder/regression fixtures |
+| `amll_edited_ttml/` | Files produced by the AMLL editor | Builder regression fixtures for deviations |
 
-When a structural question isn't settled by the reference doc, **grep the
-official samples rather than guessing or reasoning from the TTML spec.**
-Section 13 of the reference doc indexes what each file demonstrates.
-Treat `amll_edited_ttml/` strictly as "what to fix", never as a model to
-copy.
+**Do not require these samples for ordinary tasks.** `SKILL.md` plus
+`references/ttml-format.md` must be sufficient to inspect, edit, create,
+normalize, and convert TTML. Open samples only when maintaining the skill,
+regression-testing code, or investigating a shape the reference genuinely
+does not cover. Treat AMLL files strictly as counter-examples, never as a
+model to copy.
 
 ## Things that are easy to get wrong
 
 These come up repeatedly; the reference doc has the detail.
 
 - **`itunes:timing` and `xml:lang` are always present on `<tt>`** in
-  Apple's files. `itunes:timing` is exactly `"Line"` or `"Word"` - there
-  is no `"Syllable"` value, so a syllable-synced file declares `"Word"`.
+  Apple's files. `itunes:timing` is exactly `"None"`, `"Line"`, or
+  `"Word"`; there is no `"Syllable"` value, so syllable sync declares
+  `"Word"`.
   If either attribute is missing, the file has been through a
   non-Apple tool; restore it.
+- **`itunes:timing="None"` is valid untimed Apple output.** It uses plain
+  lyric text in `<p>` elements, with no `<body dur>` and no `begin`/`end`
+  on `<div>` or `<p>`. The observed sample's `<div>`/`<p>` tags are
+  otherwise attribute-free, but preserve non-timing metadata if present
+  in another file. The client cannot auto-scroll; the user scrolls
+  manually. Never reinterpret it as malformed Line sync or fabricate
+  timestamps. Timed conversion requires separately authored timing data.
 - **Line sync is not a stripped-down mode.** It supports `itunes:key`,
   `itunes:songPart`, and `ttm:agent` singers - including several agents
   for a duet - exactly as span sync does. `xmlns:ttm` therefore appears
@@ -88,19 +107,44 @@ These come up repeatedly; the reference doc has the detail.
   = new word. Never normalize whitespace between spans.
 - **`ttm:role="x-bg"` wrappers carry no `begin`/`end`** in Apple's files,
   and always sit last inside their `<p>`.
-- **Apple uses raw `'` and `"` in text**, not `&apos;`/`&quot;`.
+- **Apple uses raw apostrophes and quotes in text**, not
+  `&apos;`/`&quot;`. Both ASCII `'` and typographic `’` occur; preserve
+  whichever form the file already uses.
 - **Match the file's existing timing format** rather than imposing one.
 
-## Workflow: converting word-synced -> syllable-synced (English)
+### Classify the mode before editing
 
-1. Confirm the file is genuinely span-synced (`itunes:timing="Word"`,
-   `<span>` elements inside `<p>`) - don't assume from the filename.
+Use this decision table; do not infer from filenames:
+
+| Root value | Required content/timing shape | Meaning |
+|---|---|---|
+| `itunes:timing="None"` | Plain-text `<p>`; no `<body dur>`, no `<div begin/end>`, no `<p begin/end>` | Untimed, manual scrolling; preserve any non-timing metadata |
+| `itunes:timing="Line"` | Plain-text `<p begin end>`; timed `<body>`/`<div>` | One timestamp interval per line |
+| `itunes:timing="Word"` | Timed `<span begin end>` inside timed `<p>` | Word/syllable sync; inspect span spacing for granularity |
+
+If root value and structure disagree, preserve the lyric text and report
+the inconsistency. Do not silently choose a mode or invent missing timing.
+
+## Workflow: converting line/word-synced -> syllable-synced (English)
+
+1. Confirm the mode using the decision table above. Plain text alone is
+   not enough to distinguish `"None"` from `"Line"`; check whether line
+   timing attributes actually exist. If `itunes:timing="None"`, stop:
+   the file has no timing data and this
+   script cannot create valid timed lyrics from it. Ask for or author
+   timings separately; do not infer them from line order or song length.
 2. Confirm the lyrics are **English**. See the language limit below.
 3. Save/copy the input somewhere writable if it isn't already.
 4. Run:
    ```bash
    python3 scripts/syllabify_en.py <input.ttml> <output.ttml>
    ```
+   For a line-synced input, the script tokenizes each plain-text line
+   while preserving its whitespace, syllabifies each token, and divides
+   the line duration evenly across all emitted syllable spans. It changes
+   `<tt>`'s `itunes:timing` from `"Line"` to `"Word"`. These are
+   placeholder timings, just like the word-synced path, and must be
+   manually resynced by ear.
    The script validates its own output and **refuses to write anything if
    a check fails**, so a successful run means XML well-formedness, `<p>`
    count, total text content, span count, x-bg wrappers, `itunes:key` and
@@ -143,8 +187,10 @@ lyrics themselves.
 Reference doc section 12 has the full deviation table with per-item
 detail. Working order, highest value first:
 
-1. **Restore `itunes:timing`** on `<tt>` - `"Word"` for span-synced,
-   `"Line"` for line-synced.
+1. **Restore `itunes:timing`** on `<tt>` according to structure and
+   timing presence: `"None"` for truly untimed plain text, `"Line"` for
+   timed plain-text lines, `"Word"` for timed spans. Do not use `"None"`
+   merely as a fallback when a malformed file has lost attributes.
 2. **Restore `xml:lang`.** If the original Apple file isn't available to
    copy it from, ask the user rather than guessing.
 3. **Remove the unused `xmlns:tts` and `xmlns:amll` declarations.**
