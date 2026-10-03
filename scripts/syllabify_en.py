@@ -83,6 +83,9 @@ cases drop the "e" as a syllable nucleus:
                        is a real syllable: chan-ces, ro-ses, wa-shes)
   - before "-ed":      involved, happened  (NOT after t/d, where "-ed"
                        is a real syllable: wan-ted, nee-ded)
+"io" is one sound in -tion/-sion/-cion/-xion/-gion and -tious/-cious/
+-gious/-xious (ra-tion-al, de-li-cious) but two syllables elsewhere
+(ra-di-o, vi-o-lin), so it is only merged in those suffix contexts.
 A silent "e" mid-word at a compound seam ("something") is handled by
 splitting the compound first, so each part hits the word-final case.
 """
@@ -220,6 +223,23 @@ def split_morphemes(core):
     return [core]
 
 
+def is_ion_nucleus(core, v1, v2):
+    """True when the vowel pair at v1,v2 is the single-sound "io" of
+    -tion / -sion / -cion / -xion / -gion or -tious / -cious / -gious /
+    -xious (nation, rational, delicious). "io" is NOT in VOWEL_DIGRAPHS
+    because it is two syllables in radio, violin, lion; only these
+    suffix contexts, an io right after t/s/c/x/g and followed by "n" or
+    "us", are one sound."""
+    if v2 != v1 + 1 or v1 == 0:
+        return False
+    if (core[v1] + core[v2]).lower() != "io":
+        return False
+    if core[v1 - 1].lower() not in ("t", "s", "c", "x", "g"):
+        return False
+    rest = core[v2 + 1 :].lower()
+    return rest.startswith("n") or rest.startswith("us")
+
+
 def syllabify_core(core):
     """core: a pure A-Za-z run. Returns a list of syllable strings."""
     if not core:
@@ -291,6 +311,7 @@ def syllabify_run(core):
     syllables = []
     syl_start = 0
     k = 0
+    after_ion = False
     while k < len(vowel_idx) - 1:
         v1 = vowel_idx[k]
         v2 = vowel_idx[k + 1]
@@ -301,13 +322,22 @@ def syllabify_run(core):
             if pair in VOWEL_DIGRAPHS:
                 k += 1
                 continue  # same nucleus, no syllable boundary here
+            if is_ion_nucleus(core, v1, v2):
+                after_ion = True
+                k += 1
+                continue
             split_at = v2
+        elif after_ion and cluster[0].lower() == "n" and cluster[:2].lower() not in CONSONANT_DIGRAPHS:
+            # "-tion" followed by more word: the "n" closes the "tion"
+            # syllable (ra-tion-al, na-tion-al), not the next one.
+            split_at = v1 + 2
         elif n == 1:
             split_at = v1 + 1
         elif n == 2:
             split_at = v1 + 1 if cluster.lower() in CONSONANT_DIGRAPHS else v1 + 2
         else:
             split_at = v1 + 3 if cluster[:2].lower() in CONSONANT_DIGRAPHS else v1 + 1 + (n - 2)
+        after_ion = False
         syllables.append(core[syl_start:split_at])
         syl_start = split_at
         k += 1
