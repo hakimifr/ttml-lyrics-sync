@@ -40,8 +40,8 @@ references/ttml-format.md    the full format reference (14 sections)
 scripts/syllabify_en.py      English word→syllable splitter, with self-validation
 official_ttml_samples/
   no_timing/                 untimed output from Apple's API
-  line/                      3 line-synced files from Apple's API
-  word_syllable/             4 span-synced files from Apple's API
+  line/                      4 line-synced files from Apple's API
+  word_syllable/             6 span-synced files from Apple's API
 amll_edited_ttml/            3 AMLL editor outputs — counter-examples, not models
 ```
 
@@ -70,13 +70,20 @@ python3 scripts/syllabify_en.py input.ttml --check    # dry run, no write
 
 It converts timed plain-text lines or whole-word `<span>`s into per-syllable
 spans, validates its own output, and **refuses to write anything if a check fails**. A successful run
-means XML well-formedness, `<p>` count, total text content, span count, x-bg
-wrappers, `itunes:key` and `ttm:agent` all survived intact.
+means XML well-formedness, byte-identical `<head>` metadata, `<p>` count,
+total text content, span count, x-bg wrappers, `itunes:key` and `ttm:agent`
+all survived intact.
 
 It deliberately leaves alone multi-word spans, `x-bg` wrapper spans,
 inter-span whitespace, and the file's timing format. Untimed
 `itunes:timing="None"` files are refused because they provide no durations
-from which valid timed spans can be generated.
+from which valid timed spans can be generated. Files with transliteration /
+romanization tracks are also refused because changing lyric spans without
+updating their mirrored timed romanization would break alignment.
+
+On line-synced input, attached parenthetical parts such as `Hello (yeah)`
+are moved into a final `x-bg` wrapper as a reviewable convenience; a line
+containing only parenthetical text stays ordinary for manual editing.
 
 **The timings it produces are evenly-divided placeholders, not real sync.** No
 audio is analyzed. Both the split points and the timings need a
@@ -120,8 +127,15 @@ the official samples is line-synced with a named agent on all 44 of its lines,
 background vocals, which need spans to attach to.
 
 **Background vocals** are a nested `<span ttm:role="x-bg">` wrapper carrying
-*no* `begin`/`end`, always placed last inside its `<p>` regardless of when it
-actually occurs. Verified across all 56 instances in the corpus.
+*no* `begin`/`end`. Most observed lines place it last, but official `OMG`
+lines also place it first, so preserve the source position.
+
+**Translations and romanization** live in `<iTunesMetadata>`. Subtitle
+translations are untimed and keyed per line; they are never per-word.
+Observed Korean romanization is stored as timed transliteration spans that
+reuse the lyric spans' exact timestamps. Apple also supports per-line
+romanization, though this repo does not yet contain a verified sample of that
+serialization.
 
 **Apple uses raw apostrophes and `"` in text**, not
 `&apos;`/`&quot;`; both ASCII `'` and typographic `’` occur.
@@ -154,6 +168,10 @@ authoring tool, but its output deviates from Apple's format. This skill
 targets **Apple's format**, and `amll_edited_ttml/` is included so those
 deviations can be recognized and corrected — not reproduced.
 
+AMLL supports translations. Their absence from the provided span-synced AMLL
+samples does not mean the editor deleted them; preserve any translation or
+transliteration metadata that is present.
+
 The substantive ones:
 
 | Deviation | Correct Apple behaviour |
@@ -163,7 +181,6 @@ The substantive ones:
 | `xmlns:tts` and `xmlns:amll` declared but never used | never declared |
 | `itunes:songPart` stripped from every `<div>` | present on most `<div>`s |
 | `begin`/`end` added to the `x-bg` wrapper | wrapper carries `ttm:role` only |
-| `<translations/>` dropped | present on all official samples |
 | `leadingSilence` dropped | preserved |
 | apostrophes escaped to `&apos;` | raw `'` |
 
@@ -180,7 +197,7 @@ normalization workflow.
 
 ## Scope and caveats
 
-- The format reference is grounded in **8 official files**. It describes what
+- The format reference is grounded in **11 official files**. It describes what
   Apple demonstrably does, not a specification. Where something is convention
   rather than a hard rule, the doc says so.
 - The AMLL deviation list comes from **3 sample files** and is not a spec of

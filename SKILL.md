@@ -5,9 +5,10 @@ description: >-
   (itunes:timing=None), line-synced, word-synced, or syllable-synced form.
   Use whenever a .ttml lyric file is mentioned, inspected, edited,
   converted, or created; when handling itunes:timing/key/songPart,
-  ttm:agent singers, ttm:role=x-bg background vocals, timing formats,
-  span whitespace, or AMLL-editor cleanup; or when converting English
-  line/word sync to syllable spans. Read the bundled format reference
+  ttm:agent singers, ttm:role=x-bg background vocals, translations,
+  transliterations/romanization, timing formats, span whitespace, or
+  AMLL-editor cleanup; or when converting English line/word sync to
+  syllable spans. Read the bundled format reference
   before markup changes: it is self-contained operational documentation
   of Apple's actual format, including where Apple's published docs are
   wrong. The sample TTML files are builder/regression fixtures, not
@@ -22,7 +23,8 @@ description: >-
 verified structure of this format - namespaces and required attributes,
 `<head>`/`<body>`/`<div>`/`<p>` layout, agents, song parts, untimed and
 timed modes, background vocals, text escaping, and (critically) the
-whitespace convention that distinguishes a new syllable from a new word.
+whitespace convention that distinguishes a new syllable from a new word,
+plus translations and timed romanization metadata.
 Getting that whitespace rule wrong silently changes what the file means
 without causing an XML parse error, so read it in full rather than
 skimming - do this even if you think you already know TTML, since this
@@ -43,7 +45,8 @@ TTML spec or Apple's prose documentation.
 ## What this skill covers
 
 1. **Reading/inspecting** a TTML lyric file and correctly explaining its
-   sync level, agents, song parts, and structure.
+   sync level, agents, song parts, translations, romanization, and
+   structure.
 2. **Editing** a file (fixing a word, adjusting a timestamp, adding a
    line) without breaking its structural conventions.
 3. **Converting line- or word-synced lyrics to syllable-synced** using the
@@ -106,7 +109,18 @@ These come up repeatedly; the reference doc has the detail.
 - **Space between spans is structural.** No space = same word; one space
   = new word. Never normalize whitespace between spans.
 - **`ttm:role="x-bg"` wrappers carry no `begin`/`end`** in Apple's files,
-  and always sit last inside their `<p>`.
+  but their placement is not universal. Most observed lyric lines place
+  x-bg last; `OMG` has official lines where x-bg comes first. Preserve
+  source placement. The bundled Line-to-span convenience heuristic still
+  appends newly inferred x-bg last.
+- **Translations and romanization are separate metadata tracks.** A
+  subtitle translation is untimed, one `<text for="L…">` per lyric line;
+  it is never per-word. Observed romanization uses
+  `<transliterations>/<transliteration>` and timed TTML spans whose
+  timestamps exactly mirror the corresponding lyric spans. Preserve its
+  whitespace independently from body-lyric spacing. Apple also supports
+  per-line romanization, but its exact serialization is not yet verified
+  by a bundled official sample; do not invent that shape.
 - **Apple uses raw apostrophes and quotes in text**, not
   `&apos;`/`&quot;`. Both ASCII `'` and typographic `’` occur; preserve
   whichever form the file already uses.
@@ -133,6 +147,9 @@ the inconsistency. Do not silently choose a mode or invent missing timing.
    the file has no timing data and this
    script cannot create valid timed lyrics from it. Ask for or author
    timings separately; do not infer them from line order or song length.
+   If the file contains `<transliterations>`, stop: the bundled splitter
+   refuses it because changing body spans without synchronously rebuilding
+   the mirrored romanization spans would corrupt their alignment.
 2. Confirm the lyrics are **English**. See the language limit below.
 3. Save/copy the input somewhere writable if it isn't already.
 4. Run:
@@ -145,11 +162,22 @@ the inconsistency. Do not silently choose a mode or invent missing timing.
    `<tt>`'s `itunes:timing` from `"Line"` to `"Word"`. These are
    placeholder timings, just like the word-synced path, and must be
    manually resynced by ear.
+   It also treats balanced parenthetical segments attached to main lyric
+   text — for example, `Hello (yeah)` — as likely background vocals. It
+   moves them, parentheses intact, into one final
+   `<span ttm:role="x-bg">...</span>` wrapper, with exactly one literal
+   space before the wrapper. A line containing only parenthetical text is
+   **not** made x-bg; it remains ordinary main-vocal spans for manual
+   classification during timing. Unbalanced parentheses are likewise
+   left ordinary. This heuristic covers literal round parentheses
+   `(...)` only; it does not reinterpret square or curly brackets. This
+   is a convenience heuristic, so review every generated x-bg.
    The script validates its own output and **refuses to write anything if
-   a check fails**, so a successful run means XML well-formedness, `<p>`
-   count, total text content, span count, x-bg wrappers, `itunes:key` and
-   `ttm:agent` all survived intact. Use `--check` in place of the output
-   path for a dry run.
+   a check fails**, so a successful run means XML well-formedness, the
+   complete `<head>` metadata byte-for-byte, `<p>` count, total text
+   content, span count, x-bg wrappers, `itunes:key` and `ttm:agent` all
+   survived intact. Use `--check` in place of the output path for a dry
+   run.
 5. **Still spot-check by eye before presenting anything**, especially
    lines with contractions, quoted dialogue, or unusual tokens (numbers,
    abbreviations, stylized spellings) - the automated checks prove
@@ -198,7 +226,13 @@ detail. Working order, highest value first:
    (in the samples, nothing does).
 4. **Strip `begin`/`end` from `ttm:role="x-bg"` wrapper spans**, leaving
    the inner spans' timings alone.
-5. **Restore `<translations/>`** inside `<iTunesMetadata>`.
+5. **Preserve any translations and transliterations exactly.** AMLL can
+   author translations; the provided span-synced AMLL samples simply did
+   not contain them. Do not claim translation data was dropped, and never
+   invent translated or romanized text. Apple's official files always
+   carry a `<translations>` container, empty when no translation exists,
+   so add an empty `<translations/>` only when the task is explicitly to
+   normalize a missing container to Apple's observed shape.
 6. **Restore `leadingSilence`** if the original had it.
 7. **Convert `&apos;` back to raw `'`** to match Apple's convention.
 8. **Flag the lost `itunes:songPart` labels.** The AMLL editor strips

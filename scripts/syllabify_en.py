@@ -4,7 +4,8 @@ English syllable splitter for Apple Music TTML lyric files.
 
 Converts either sync form to syllable-level spans:
   - line-synced: splits each plain-text <p> on whitespace, syllabifies
-    every token, and distributes the line duration evenly across all
+    every token, moves balanced parenthesized segments into a final x-bg
+    wrapper, and distributes the line duration evenly across all
     resulting syllables;
   - span-synced: splits each whole-word <span> into N consecutive
     syllable spans within that span's existing duration.
@@ -17,6 +18,10 @@ Untimed files (`itunes:timing="None"`) are rejected: they contain no
 line, word, or song-duration timings from which valid spans could be
 derived. Supply or author timing data first; never infer it from line
 order alone.
+
+Files with `<transliterations>` are also rejected. Per-word romanization
+mirrors the body spans' exact timings, so changing only the body would
+silently break the alignment between the two tracks.
 
 Timing: real syllable timing has to come from listening to the vocal
 performance, so this script evenly divides each original word's
@@ -42,6 +47,19 @@ What it deliberately does NOT touch:
   - The file's timing format. The existing convention (bare seconds /
     MM:SS / HH:MM:SS - format reference section 9) is detected and
     matched for every timestamp written.
+
+Line-sync background heuristic:
+  - Balanced parenthetical segments are treated as likely background
+    vocals, moved into one final <span ttm:role="x-bg"> wrapper, and
+    retain their parentheses.
+  - A line made entirely of parenthetical text is NOT converted to x-bg;
+    x-bg must be attached to a main-vocal line. Such a line remains
+    ordinary main-vocal span content for manual review during timing.
+  - The generated x-bg wrapper is preceded by one literal space whenever
+    it is emitted. This is the structural separator between the main
+    line and the background-vocal part.
+  - This is a heuristic: parenthesized text is not guaranteed to be sung
+    background. Review the generated output before presenting it.
 
 This is a best-effort TEXTUAL heuristic, not a phonetic/dictionary
 lookup. Known limitations (disclose these to the user every time this
@@ -86,8 +104,24 @@ CONSONANT_DIGRAPHS = {"ng", "ny", "sy", "kh", "gh", "th", "sh", "ch", "ph", "wh"
 # Vowel pairs representing ONE vowel sound, which must not be split into
 # separate syllables ("creep", "feel", "boy").
 VOWEL_DIGRAPHS = {
-    "ee", "oo", "ea", "oa", "ai", "ay", "oy", "oi", "ou", "ow",
-    "ie", "ei", "ey", "au", "aw", "ue", "eu", "oe",
+    "ee",
+    "oo",
+    "ea",
+    "oa",
+    "ai",
+    "ay",
+    "oy",
+    "oi",
+    "ou",
+    "ow",
+    "ie",
+    "ei",
+    "ey",
+    "au",
+    "aw",
+    "ue",
+    "eu",
+    "oe",
 }
 
 # XML entities are collapsed to single opaque placeholder characters so
@@ -110,9 +144,27 @@ ENTITIES = (("&quot;", ENT_QUOT), ("&apos;", ENT_APOS), ("&amp;", ENT_AMP))
 # real morpheme seam a singer would phrase across, since a wrong entry
 # mis-splits every word that happens to end in those letters.
 MORPHEME_SUFFIXES = (
-    "bodies", "body", "thing", "things", "where", "times", "time",
-    "light", "night", "teen", "ment", "less", "ness", "some", "work",
-    "ful", "one", "day", "days", "how", "ly",
+    "bodies",
+    "body",
+    "thing",
+    "things",
+    "where",
+    "times",
+    "time",
+    "light",
+    "night",
+    "teen",
+    "ment",
+    "less",
+    "ness",
+    "some",
+    "work",
+    "ful",
+    "one",
+    "day",
+    "days",
+    "how",
+    "ly",
 )
 
 # Apple's text uses both ASCII and typographic apostrophes; AMLL may use
@@ -159,12 +211,12 @@ def split_morphemes(core):
     low = core.lower()
     for suf in MORPHEME_SUFFIXES:
         if len(low) > len(suf) + 1 and low.endswith(suf):
-            head = core[:-len(suf)]
+            head = core[: -len(suf)]
             # The head has to be able to stand alone as a syllable, i.e.
             # contain a vowel. Guards against "thing" itself, or heads
             # like "str" that are only a cluster.
             if any(is_vowel(head, i) for i in range(len(head))):
-                return split_morphemes(head) + [core[-len(suf):]]
+                return split_morphemes(head) + [core[-len(suf) :]]
     return [core]
 
 
@@ -199,8 +251,7 @@ def syllabify_run(core):
     # make the final e look like a second nucleus and split "good-by-e".
     # For a FINAL e specifically, a preceding y behaves as the consonant
     # frame, so the e is silent just as it is in "blame".
-    if len(core) >= 2 and core[-1].lower() == "e" \
-            and (not is_vowel(core, len(core) - 2) or core[-2].lower() == "y"):
+    if len(core) >= 2 and core[-1].lower() == "e" and (not is_vowel(core, len(core) - 2) or core[-2].lower() == "y"):
         last_i = len(core) - 1
         if last_i in vowel_idx and len(vowel_idx) > 1:
             vowel_idx.remove(last_i)
@@ -211,17 +262,25 @@ def syllabify_run(core):
     # The exception is sibilants, where "-es" genuinely IS a spoken
     # syllable: chan-ces, voi-ces, ro-ses, wa-shes, boun-ces. Those are
     # detected by the consonant before the "e" and left alone.
-    elif len(core) >= 4 and core[-1].lower() == "s" and core[-2].lower() == "e" \
-            and (not is_vowel(core, len(core) - 3) or core[-3].lower() == "y") \
-            and core[-3].lower() not in ("c", "s", "g", "x", "z") \
-            and core[-4:-2].lower() not in ("ch", "sh"):
+    elif (
+        len(core) >= 4
+        and core[-1].lower() == "s"
+        and core[-2].lower() == "e"
+        and (not is_vowel(core, len(core) - 3) or core[-3].lower() == "y")
+        and core[-3].lower() not in ("c", "s", "g", "x", "z")
+        and core[-4:-2].lower() not in ("ch", "sh")
+    ):
         e_i = len(core) - 2
         if e_i in vowel_idx and len(vowel_idx) > 1:
             vowel_idx.remove(e_i)
     # Silent "e" before past-tense "-ed" (involved, happened) - unless
     # preceded by t/d, where "-ed" IS its own syllable (wanted, needed).
-    elif len(core) >= 3 and core[-2:].lower() == "ed" and not is_vowel(core, len(core) - 3) \
-            and core[-3].lower() not in ("t", "d"):
+    elif (
+        len(core) >= 3
+        and core[-2:].lower() == "ed"
+        and not is_vowel(core, len(core) - 3)
+        and core[-3].lower() not in ("t", "d")
+    ):
         e_i = len(core) - 2
         if e_i in vowel_idx and len(vowel_idx) > 1:
             vowel_idx.remove(e_i)
@@ -235,7 +294,7 @@ def syllabify_run(core):
     while k < len(vowel_idx) - 1:
         v1 = vowel_idx[k]
         v2 = vowel_idx[k + 1]
-        cluster = core[v1 + 1:v2]
+        cluster = core[v1 + 1 : v2]
         n = len(cluster)
         if n == 0:
             pair = (core[v1] + core[v2]).lower()
@@ -281,8 +340,7 @@ def syllabify_word(word):
     # Always its own trailing syllable: a generic vowel-adjacency read of
     # "oin" would treat it as one diphthong nucleus and refuse to split.
     # Fires on both a raw apostrophe and an escaped one.
-    if len(mid) > 2 and mid[-2:].lower() == "in" \
-            and post[:1] in APOSTROPHES:
+    if len(mid) > 2 and mid[-2:].lower() == "in" and post[:1] in APOSTROPHES:
         base, suffix = mid[:-2], mid[-2:] + post
         syls = syllabify_core(base) if base else []
         syls = [s for s in syls if s]
@@ -378,8 +436,8 @@ def format_time(total_seconds, style="bare"):
 # re-join - all three of which corrupt the file.
 # --------------------------------------------------------------------
 
-SPAN_TAG_RE = re.compile(r'<span(\s[^>]*)?>|</span>', re.DOTALL)
-P_RE = re.compile(r'<p(\s[^>]*)?>(.*?)</p>', re.DOTALL)
+SPAN_TAG_RE = re.compile(r"<span(\s[^>]*)?>|</span>", re.DOTALL)
+P_RE = re.compile(r"<p(\s[^>]*)?>(.*?)</p>", re.DOTALL)
 ATTR_RE = re.compile(r'(\s%s=")([^"]*)(")')
 
 
@@ -392,7 +450,7 @@ def parse_nodes(s):
     pos = 0
     for m in SPAN_TAG_RE.finditer(s):
         if m.start() > pos:
-            children_stack[-1].append(("text", s[pos:m.start()]))
+            children_stack[-1].append(("text", s[pos : m.start()]))
         pos = m.end()
         if m.group().startswith("</"):
             if len(children_stack) > 1:
@@ -429,11 +487,10 @@ def get_attr(attrs, name):
 
 
 def set_attr(attrs, name, value):
-    return re.sub(r'(\s%s=")[^"]*(")' % name,
-                  lambda m: m.group(1) + value + m.group(2), attrs, count=1)
+    return re.sub(r'(\s%s=")[^"]*(")' % name, lambda m: m.group(1) + value + m.group(2), attrs, count=1)
 
 
-class Stats(object):
+class Stats:
     def __init__(self):
         self.lines_converted = 0
         self.line_tokens = 0
@@ -445,6 +502,107 @@ class Stats(object):
         self.too_short_to_split = 0
         self.leaf_spans = 0
         self.bg_wrappers = 0
+        self.generated_bg_wrappers = 0
+        self.parenthetical_segments = 0
+        self.parenthetical_syllables = 0
+        self.unbalanced_parenthetical_lines = 0
+
+
+def parenthetical_ranges(text):
+    """Return (top-level parenthetical ranges, balanced).
+
+    Each range is (start, end, text), with end exclusive. Nested
+    parentheses stay inside the outer group. Any unmatched parenthesis
+    disables the heuristic for the whole line.
+    """
+    stack = []
+    groups = []
+    for i, char in enumerate(text):
+        if char == "(":
+            stack.append(i)
+        elif char == ")":
+            if not stack:
+                return [], False
+            start = stack.pop()
+            if not stack:
+                groups.append((start, i + 1, text[start : i + 1]))
+
+    if stack:
+        return [], False
+    return groups, True
+
+
+def extract_parentheticals(text):
+    """Return (main text, parenthetical groups, ranges, balanced)."""
+    ranges, balanced = parenthetical_ranges(text)
+    if not balanced:
+        return text, [], [], False
+
+    # Empty parentheses contain no candidate vocal. Leave the entire line
+    # ordinary instead of creating a meaningless x-bg wrapper.
+    if any(not group[1:-1].strip() for _, _, group in ranges):
+        return text, [], [], True
+
+    main_parts = []
+    cursor = 0
+    for start, end, _ in ranges:
+        main_parts.append(text[cursor:start])
+        # If a parenthetical was directly between two alphanumeric runs,
+        # retain a word boundary after moving it. Do not insert a space
+        # before punctuation: Hello(yeah), world -> Hello, world.
+        if start > 0 and end < len(text) and text[start - 1].isalnum() and text[end].isalnum():
+            main_parts.append(" ")
+        cursor = end
+    main_parts.append(text[cursor:])
+    main = "".join(main_parts)
+    if ranges:
+        # Removing a parenthetical can leave whitespace on both sides.
+        # Normalize only this converted line; ungrouped line conversion
+        # continues to preserve whitespace exactly.
+        main = re.sub(r"\s+", " ", main).strip()
+    return main, [group for _, _, group in ranges], ranges, True
+
+
+def token_records(text):
+    """Return (whitespace-preserving chunks, token records).
+
+    Each record contains the original token's syllables and receives
+    placeholder timestamps later.
+    """
+    chunks = re.split(r"(\s+)", text)
+    records = []
+    for chunk in chunks:
+        if chunk and not chunk.isspace():
+            records.append({"text": chunk, "syllables": syllabify_word(chunk), "timings": []})
+    return chunks, records
+
+
+def render_token_records(chunks, records, style):
+    """Render token records back into spans while retaining whitespace."""
+    out = []
+    record_index = 0
+    for chunk in chunks:
+        if not chunk or chunk.isspace():
+            out.append(chunk)
+            continue
+        record = records[record_index]
+        record_index += 1
+        for syllable, (begin, end) in zip(record["syllables"], record["timings"]):
+            out.append(
+                '<span begin="%s" end="%s">%s</span>' % (format_time(begin, style), format_time(end, style), syllable)
+            )
+    return "".join(out)
+
+
+def ensure_ttm_namespace(text):
+    """Add Apple's ttm namespace when generated x-bg markup needs it."""
+    if re.search(r'\bxmlns:ttm="[^"]*"', text):
+        return text
+    ttm = ' xmlns:ttm="http://www.w3.org/ns/ttml#metadata"'
+    updated, count = re.subn(r'(<tt\b[^>]*\bxmlns:itunes="[^"]*")', r"\1" + ttm, text, count=1)
+    if count:
+        return updated
+    return re.sub(r"<tt\b", "<tt" + ttm, text, count=1)
 
 
 def transform_line_p(attrs, inner, style, stats):
@@ -459,16 +617,40 @@ def transform_line_p(attrs, inner, style, stats):
         stats.unconvertible_lines += 1
         return "<p" + attrs + ">" + inner + "</p>"
 
-    chunks = re.split(r"(\s+)", inner)
-    token_data = []
-    total_syllables = 0
-    for chunk in chunks:
-        if not chunk or chunk.isspace():
-            token_data.append(("space", chunk))
-            continue
-        syllables = syllabify_word(chunk)
-        token_data.append(("word", syllables))
-        total_syllables += len(syllables)
+    main_text, parenthetical_groups, ranges, balanced = extract_parentheticals(inner)
+    if not balanced:
+        stats.unbalanced_parenthetical_lines += 1
+        main_text, parenthetical_groups, ranges = inner, [], []
+
+    # x-bg is attached to a main-vocal line. A parenthetical-only line is
+    # kept as ordinary main-vocal content for manual review. Punctuation
+    # outside the parentheses does not by itself count as a main vocal.
+    has_main_vocal = any(char.isalnum() or char == "*" for char in main_text)
+    generate_bg = bool(parenthetical_groups and has_main_vocal)
+    if not generate_bg:
+        main_text, parenthetical_groups, ranges = inner, [], []
+
+    main_chunks, main_records = token_records(main_text)
+    bg_chunks, _ = token_records(" ".join(parenthetical_groups))
+
+    # Build records in original lyric order so placeholder timing follows
+    # the source sequence even though x-bg is rendered at the end of <p>.
+    ordered_records = []
+    cursor = 0
+    if generate_bg:
+        for start, range_end, group in ranges:
+            fragment = inner[cursor:start]
+            _, fragment_records = token_records(fragment)
+            ordered_records.extend(("main", record) for record in fragment_records)
+            _, group_records = token_records(group)
+            ordered_records.extend(("bg", record) for record in group_records)
+            cursor = range_end
+        _, fragment_records = token_records(inner[cursor:])
+        ordered_records.extend(("main", record) for record in fragment_records)
+    else:
+        ordered_records.extend(("main", record) for record in main_records)
+
+    total_syllables = sum(len(record["syllables"]) for _, record in ordered_records)
 
     if total_syllables == 0:
         stats.unconvertible_lines += 1
@@ -478,23 +660,34 @@ def transform_line_p(attrs, inner, style, stats):
     step = (e - b) / total_syllables
     t0 = b
     emitted = 0
-    out = []
-    for kind, value in token_data:
-        if kind == "space":
-            out.append(value)
-            continue
+    for kind, record in ordered_records:
+        record["timings"] = []
         stats.line_tokens += 1
-        for syllable in value:
+        if kind == "bg":
+            stats.parenthetical_syllables += len(record["syllables"])
+        for _ in record["syllables"]:
             emitted += 1
             t1 = e if emitted == total_syllables else t0 + step
-            out.append('<span begin="%s" end="%s">%s</span>' %
-                       (format_time(t0, style), format_time(t1, style),
-                        syllable))
+            record["timings"].append((t0, t1))
             t0 = t1
+
+    main_ordered = [record for kind, record in ordered_records if kind == "main"]
+    bg_ordered = [record for kind, record in ordered_records if kind == "bg"]
+    main_output = render_token_records(main_chunks, main_ordered, style)
+    bg_output = render_token_records(bg_chunks, bg_ordered, style)
+    if generate_bg:
+        stats.generated_bg_wrappers += 1
+        stats.parenthetical_segments += len(parenthetical_groups)
+        wrapper = '<span ttm:role="x-bg">' + bg_output + "</span>"
+        # x-bg always follows a main-vocal part and has one literal
+        # structural space before its opening wrapper tag.
+        content = main_output + " " + wrapper
+    else:
+        content = main_output
 
     stats.lines_converted += 1
     stats.line_syllables += total_syllables
-    return "<p" + attrs + ">" + "".join(out) + "</p>"
+    return "<p" + attrs + ">" + content + "</p>"
 
 
 def transform_nodes(nodes, style, stats):
@@ -565,13 +758,13 @@ def syllabify_text(text):
         attrs, inner = match.group(1) or "", match.group(2)
         if "<span" not in inner:
             return transform_line_p(attrs, inner, style, stats)
-        return "<p" + attrs + ">" + render(
-            transform_nodes(parse_nodes(inner), style, stats)) + "</p>"
+        return "<p" + attrs + ">" + render(transform_nodes(parse_nodes(inner), style, stats)) + "</p>"
 
     result = P_RE.sub(process_p, text)
     if stats.lines_converted:
-        result = re.sub(r'(\bitunes:timing=")Line(")', r'\1Word\2',
-                        result, count=1)
+        result = re.sub(r'(\bitunes:timing=")Line(")', r"\1Word\2", result, count=1)
+    if stats.generated_bg_wrappers:
+        result = ensure_ttm_namespace(result)
     return result, style, stats
 
 
@@ -580,6 +773,7 @@ def syllabify_text(text):
 # --------------------------------------------------------------------
 
 TAG_RE = re.compile(r"<[^>]+>")
+HEAD_RE = re.compile(r"<head(?:\s[^>]*)?>.*?</head>", re.DOTALL)
 
 
 def text_content(s):
@@ -591,7 +785,29 @@ def text_content(s):
     return body
 
 
-def validate(before, after):
+def expected_text_after_line_bg_conversion(s):
+    """Canonical source text after the intentional x-bg relocation.
+
+    For eligible line-synced <p>s, move parenthetical groups after the
+    main text exactly as transform_line_p does. Tags are then stripped so
+    validation can still prove no lyric characters were lost or altered.
+    """
+
+    def canonical_p(match):
+        attrs, inner = match.group(1) or "", match.group(2)
+        if "<span" in inner:
+            return match.group(0)
+        if get_attr(attrs, "begin") is None or get_attr(attrs, "end") is None:
+            return match.group(0)
+        main, groups, _, balanced = extract_parentheticals(inner)
+        if not balanced or not groups or not main.strip():
+            return match.group(0)
+        return "<p" + attrs + ">" + main + " " + " ".join(groups) + "</p>"
+
+    return text_content(P_RE.sub(canonical_p, s))
+
+
+def validate(before, after, generated_bg_wrappers=0):
     """Returns a list of problem strings; empty means all checks pass."""
     problems = []
 
@@ -600,21 +816,38 @@ def validate(before, after):
     except ET.ParseError as exc:
         problems.append("output is not well-formed XML: %s" % exc)
 
+    head_before = HEAD_RE.search(before)
+    head_after = HEAD_RE.search(after)
+    if (head_before is None) != (head_after is None) or (
+        head_before is not None and head_before.group(0) != head_after.group(0)
+    ):
+        problems.append(
+            "<head> metadata changed - translations, "
+            "transliterations, agents or credits were not "
+            "preserved byte-for-byte"
+        )
+
     n_before = len(re.findall(r"<p[\s>]", before))
     n_after = len(re.findall(r"<p[\s>]", after))
     if n_before != n_after:
         problems.append("<p> count changed: %d -> %d" % (n_before, n_after))
 
-    if text_content(before) != text_content(after):
-        problems.append("lyric text content changed - characters were "
-                        "added, dropped or reordered")
+    expected_text = expected_text_after_line_bg_conversion(before) if generated_bg_wrappers else text_content(before)
+    if expected_text != text_content(after):
+        problems.append("lyric text content changed - characters were added, dropped or reordered")
 
-    for name, pat in (("x-bg wrapper", r'ttm:role="x-bg"'),
-                      ("itunes:key", r"itunes:key="),
-                      ("ttm:agent", r"ttm:agent=")):
+    for name, pat in (("itunes:key", r"itunes:key="), ("ttm:agent", r"ttm:agent=")):
         a, b = len(re.findall(pat, before)), len(re.findall(pat, after))
         if a != b:
             problems.append("%s count changed: %d -> %d" % (name, a, b))
+
+    bg_before = len(re.findall(r'ttm:role="x-bg"', before))
+    bg_after = len(re.findall(r'ttm:role="x-bg"', after))
+    expected_bg = bg_before + generated_bg_wrappers
+    if bg_after != expected_bg:
+        problems.append(
+            "x-bg wrapper count changed unexpectedly: %d -> %d (expected %d)" % (bg_before, bg_after, expected_bg)
+        )
 
     n_span_before = len(re.findall(r"<span[\s>]", before))
     n_span_after = len(re.findall(r"<span[\s>]", after))
@@ -625,10 +858,20 @@ def validate(before, after):
 
 
 def syllabify_file(in_path, out_path=None):
-    with open(in_path, "r", encoding="utf-8") as f:
+    with open(in_path, encoding="utf-8") as f:
         original = f.read()
 
     warnings = []
+
+    if re.search(r"<transliterations(?:\s|>)", original):
+        style = detect_time_style(original)
+        problems = [
+            "input contains a transliteration/romanization track. This "
+            "splitter does not update its mirrored per-word spans, so "
+            "conversion is refused to prevent lyric/romanization timing "
+            "misalignment."
+        ]
+        return original, style, Stats(), problems, warnings
 
     # English only. xml:lang is a weak signal - one official sample has
     # Malay lyrics tagged "en" - so this catches the obvious case only,
@@ -638,14 +881,13 @@ def syllabify_file(in_path, out_path=None):
         warnings.append(
             'file is tagged xml:lang="%s" but this splitter implements '
             "English only. Do not use the output without checking the "
-            "lyrics are actually English." % lang.group(1))
+            "lyrics are actually English." % lang.group(1)
+        )
 
     timing = re.search(r'itunes:timing="([^"]*)"', original)
     if timing is None:
-        has_spans = bool(re.search(r'<p(?:\s[^>]*)?>.*?<span[\s>]',
-                                   original, re.DOTALL))
-        has_timed_lines = bool(re.search(
-            r'<p\s[^>]*\bbegin="[^"]+"[^>]*\bend="[^"]+"', original))
+        has_spans = bool(re.search(r"<p(?:\s[^>]*)?>.*?<span[\s>]", original, re.DOTALL))
+        has_timed_lines = bool(re.search(r'<p\s[^>]*\bbegin="[^"]+"[^>]*\bend="[^"]+"', original))
         if has_spans:
             suggestion = 'Timed spans establish itunes:timing="Word".'
         elif has_timed_lines:
@@ -653,28 +895,29 @@ def syllabify_file(in_path, out_path=None):
         else:
             suggestion = (
                 'The structure may be untimed ("None") or incomplete; '
-                'do not guess without the intended mode or source timings.')
-        warnings.append(
-            "input has no itunes:timing attribute - Apple always sets it. "
-            + suggestion)
+                "do not guess without the intended mode or source timings."
+            )
+        warnings.append("input has no itunes:timing attribute - Apple always sets it. " + suggestion)
     elif timing.group(1) == "Line":
         warnings.append(
             'input declares itunes:timing="Line"; plain-text lines will '
-            'be converted to syllable spans and the value changed to '
-            'itunes:timing="Word".')
+            "be converted to syllable spans and the value changed to "
+            'itunes:timing="Word".'
+        )
 
     new_text, style, stats = syllabify_text(original)
-    problems = validate(original, new_text)
+    problems = validate(original, new_text, stats.generated_bg_wrappers)
 
     if timing is not None and timing.group(1) == "None":
         problems.append(
             'input declares itunes:timing="None" and contains no timing '
-            'data. Timed syllable spans cannot be generated without '
-            'separately authored timings.')
+            "data. Timed syllable spans cannot be generated without "
+            "separately authored timings."
+        )
     elif timing is not None and timing.group(1) not in ("Line", "Word"):
         problems.append(
-            'unsupported itunes:timing value %r; Apple uses only '
-            '"None", "Line", or "Word".' % timing.group(1))
+            'unsupported itunes:timing value %r; Apple uses only "None", "Line", or "Word".' % timing.group(1)
+        )
 
     if out_path and not problems:
         with open(out_path, "w", encoding="utf-8") as f:
@@ -695,18 +938,25 @@ def main(argv):
     new_text, style, stats, problems, warnings = syllabify_file(in_path, out_path)
 
     print("timing style detected: %s" % style)
-    print("line <p>s converted:    %d  (%d token(s), %d syllable span(s))"
-          % (stats.lines_converted, stats.line_tokens,
-             stats.line_syllables))
+    print(
+        "line <p>s converted:    %d  (%d token(s), %d syllable span(s))"
+        % (stats.lines_converted, stats.line_tokens, stats.line_syllables)
+    )
     if stats.unconvertible_lines:
-        print("line <p>s left plain:   %d  (missing timing or no tokens)"
-              % stats.unconvertible_lines)
+        print("line <p>s left plain:   %d  (missing timing or no tokens)" % stats.unconvertible_lines)
     print("word spans examined:   %d" % stats.leaf_spans)
-    print("words split:           %d  (into %d syllable spans)"
-          % (stats.words_split, stats.syllables_made))
-    print("left whole:            %d multi-word span(s), %d too short to split"
-          % (stats.multiword_spans, stats.too_short_to_split))
+    print("words split:           %d  (into %d syllable spans)" % (stats.words_split, stats.syllables_made))
+    print(
+        "left whole:            %d multi-word span(s), %d too short to split"
+        % (stats.multiword_spans, stats.too_short_to_split)
+    )
     print("x-bg wrappers kept:    %d" % stats.bg_wrappers)
+    print(
+        "x-bg wrappers created: %d  (%d parenthetical segment(s), %d syllable span(s))"
+        % (stats.generated_bg_wrappers, stats.parenthetical_segments, stats.parenthetical_syllables)
+    )
+    if stats.unbalanced_parenthetical_lines:
+        print("parenthetical lines left ordinary: %d  (unbalanced parentheses)" % stats.unbalanced_parenthetical_lines)
 
     for w in warnings:
         print("WARNING: %s" % w)
@@ -717,13 +967,17 @@ def main(argv):
         print("No output written.")
         return 2
 
-    print("validation: OK (well-formed, <p> count, text content, spans, "
-          "x-bg, keys and agents all preserved)")
+    print(
+        "validation: OK (well-formed, <head> metadata, <p> count, text "
+        "content, spans, x-bg, keys and agents all preserved)"
+    )
     if out_path:
         print("Wrote %s" % out_path)
-    print("NOTE: syllable timings are evenly-divided placeholders, not real "
-          "sync. Both the split points and the timings need a "
-          "listen-through pass.")
+    print(
+        "NOTE: syllable timings are evenly-divided placeholders, not real "
+        "sync. Both the split points and the timings need a "
+        "listen-through pass."
+    )
     return 0
 
 

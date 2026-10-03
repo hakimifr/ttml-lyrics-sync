@@ -2,7 +2,7 @@
 
 This describes the TTML lyric format **as Apple Music actually emits it**,
 verified against the files in `official_ttml_samples/` (pulled directly
-from Apple's API): one untimed file, three line-synced files, and four
+from Apple's API): one untimed file, four line-synced files, and six
 word/syllable-synced files. Every claim below was checked against that corpus, not assumed
 from the TTML spec in the abstract — this format has Apple-specific
 conventions layered on top of generic TTML.
@@ -25,7 +25,7 @@ reference, not a prerequisite for using it.
 
 1. Timing modes and sync granularity
 2. Root element, namespaces, and required attributes
-3. Head, agents, and metadata
+3. Head, agents, translations, romanization, and metadata
 4. Body and div sections
 5. Lyric-line (`p`) structure
 6. Untimed and line-synced content
@@ -77,7 +77,7 @@ There are three root timing values but four useful granularity labels:
     xml:lang="en">
 ```
 
-Across all eight official samples the `<tt>` attribute set is
+Across all eleven official samples the `<tt>` attribute set is
 **consistent, with one conditional namespace**:
 
 | Attribute | Untimed (`None`) | Line-synced | Word/syllable-synced |
@@ -91,14 +91,15 @@ Across all eight official samples the `<tt>` attribute set is
 - **`xmlns:ttm` is present whenever the file references anything in that
   namespace, at any sync level.** For word/syllable files that is always,
   since they use `<ttm:agent>` and/or `<span ttm:role>`. **Line-synced
-  files vary: 1 of 3 in the corpus declares it.**
+  files vary: 2 of 4 in the corpus declare it.**
 
   A line-synced file needs `ttm` when it names singers — most obviously
   when a duet or group means several agents, but a vendor may also
   declare a single agent when nothing forces it. `#icanteven` does
   exactly that: line-synced, one `person v1` agent, `ttm:agent="v1"` on
-  all 44 `<p>` elements, `xmlns:ttm` duly declared. Meanwhile `9 to 5`
-  and `How Long` name no singers and correctly omit the namespace.
+  all 44 `<p>` elements, `xmlns:ttm` duly declared. `Not So Bad` also
+  declares `person v1` and `person v2`; meanwhile `9 to 5` and `How Long`
+  name no singers and correctly omit the namespace.
 
   **So don't treat `xmlns:ttm` on a line-synced file as an error, and
   don't strip it.** The rule is simply: declare it if and only if
@@ -155,7 +156,7 @@ format variant.
 
 ### `xml:lang` — required
 
-Present on all eight official samples. One caveat worth knowing: the value
+Present on all eleven official samples. One caveat worth knowing: the value
 reflects Apple's catalogue metadata, and can disagree with the actual
 language of the lyrics — `9 to 5 (feat. khodi) - Lucidrari.ttml` has
 Malay lyrics and `xml:lang="en"`. Don't "correct" it to match the lyrics
@@ -164,7 +165,7 @@ drops this attribute on span-synced files; restore it (§12).
 
 ---
 
-## 3. `<head>` — agents and metadata
+## 3. `<head>` — agents, translations, romanization, and metadata
 
 ```xml
 <head>
@@ -210,11 +211,15 @@ Observed in the corpus:
 
 - `#icanteven` (**line-synced**) — one agent, `person v1`, carrying a
   `<ttm:name>` child.
+- `Not So Bad` (**line-synced**) — two self-closing agents, `person v1`
+  and `person v2`.
 - `10:35` — one agent, `person v1`.
 - `Luther` — `person v1`, `person v2`, `other v2000`, `group v1000`.
 - `Popular` — `person v1`, `person v2`, `person v3`, `other v2000`,
   `group v1000`.
 - `You` — `person v1`, `person v2`, `group v1000`, `other v2000`.
+- `APT.` — `person v1`, `person v2`, `group v1000`.
+- `OMG` — one agent, `person v1`.
 
 Note that the *declaration order* of `v1000` and `v2000` varies between
 files (`Luther` declares `v2000` before `v1000`, `You` the reverse), so
@@ -236,7 +241,7 @@ child holding the performer's display name:
 <ttm:agent type="person" xml:id="v1"><ttm:name type="full">The Neighbourhood</ttm:name></ttm:agent>
 ```
 
-Only `#icanteven` does this in the current corpus (1 of 5 files that
+Only `#icanteven` does this in the current corpus (1 of 8 files that
 declare agents at all), and the only observed `type` on `<ttm:name>` is
 `"full"`. **Preserve a `<ttm:name>` if you find one** — don't collapse
 the agent back to a self-closing tag, and don't invent names for agents
@@ -249,7 +254,9 @@ miss every agent in a file like this one.
 **Line sync fully supports agents**, and `#icanteven` demonstrates the
 whole chain in a file with no spans at all: `xmlns:ttm` on `<tt>`, a
 `<ttm:agent>` declaration in `<head>`, and `ttm:agent="v1"` on every
-`<p>`. The other two line-synced samples simply don't name singers.
+`<p>`. `Not So Bad` demonstrates two person agents and switches between
+`v1` and `v2`; the other two line-synced samples simply don't name
+singers.
 
 So the presence or absence of agents says nothing about sync level, and
 vice versa. See §10 for the one thing line sync genuinely cannot express.
@@ -261,14 +268,91 @@ vice versa. See §10 for the one thing line sync genuinely cannot express.
   correct and expected, not a typo: it sits inside the ttml-namespaced
   `<metadata>` but belongs to the iTunes schema.
 - **`leadingSilence="..."`** — optional attribute, observed as `"0"`,
-  `"0.100"`, `"0.180"`, `"0.200"`. Present on 5 of 8 official samples.
+  `"0.100"`, `"0.180"`, `"0.200"`. Present on 7 of 11 official samples.
   Preserve it when editing; the AMLL editor drops it.
-- **`<translations/>`** — an empty placeholder element. Present on **all
-  eight** official samples, so treat it as standard, not optional. (The
-  AMLL editor keeps it on line-synced output but drops it on span-synced
-  output.)
+- **`<translations>`** — present on **all eleven** official samples.
+  It is self-closing as `<translations/>` when no translation exists,
+  and contains subtitle tracks when translations are available. See the
+  complete schema below. Do not assume it is always empty.
 - **`<songwriters><songwriter>Name</songwriter>…</songwriters>`** — one
   element per credited writer, present on every official sample.
+- **`<audio lyricOffset="0.882" role="spatial"/>`** — optional metadata
+  observed on `OMG`. Its broader value set and semantics are not verified;
+  preserve it exactly rather than adding, removing, or recalculating it.
+
+### Translations
+
+Translations live under the iTunes-namespace `<iTunesMetadata>` element,
+not beside the timed lyric `<p>` elements:
+
+```xml
+<translations>
+  <translation type="subtitle" xml:lang="en-US">
+    <text for="L1">Translated full line</text>
+    <text for="L2">Translated main line <span xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata" ttm:role="x-bg">(Translated background)</span></text>
+  </translation>
+</translations>
+```
+
+- The observed track is `<translation type="subtitle" xml:lang="en-US">`.
+  `xml:lang` identifies the translation's target language; preserve the
+  actual BCP 47 value rather than replacing it with the root language.
+- Each iTunes-namespace `<text for="L…">` maps to the body `<p>` carrying
+  the same `itunes:key`. Resolve by the `for` value, **not child order**:
+  official translation entries are not necessarily sorted numerically.
+- Translation is **per-line only**. The `<text>` content is an untimed
+  rendering of the complete translated line. Per-word translation is not
+  a supported or meaningful shape; do not put timed word spans around a
+  translation.
+- If the source line has x-bg, the translated line may mirror it with an
+  untimed TTML `<span ttm:role="x-bg">` containing direct text. Preserve
+  the wrapper's position: official metadata examples include both trailing
+  and leading x-bg.
+- When no translation exists, keep the standard empty `<translations/>`
+  container. Never invent translated text.
+
+### Transliterations / romanization
+
+Apple calls the metadata track a **transliteration**; for Korean `*-Latn`
+tracks this is the romanization shown by the client. The two observed
+official files use per-word timed romanization:
+
+```xml
+<transliterations>
+  <transliteration xml:lang="ko-Latn">
+    <text for="L1">
+      <span begin="6.677" end="7.066" xmlns="http://www.w3.org/ns/ttml">a</span> <span begin="7.066" end="7.439" xmlns="http://www.w3.org/ns/ttml">pa teu</span>  <span begin="7.439" end="7.646" xmlns="http://www.w3.org/ns/ttml">a</span>
+    </text>
+  </transliteration>
+</transliterations>
+```
+
+- `<transliterations>` is optional. Its observed child is
+  `<transliteration xml:lang="ko-Latn">`; `OMG` additionally has
+  `automaticallyCreated="true"`, while `APT.` does not. Preserve that
+  provenance attribute if present; do not add it by inference.
+- Each `<text for="L…">` maps to the same keyed body line. In both files,
+  every body key has exactly one translation entry and one transliteration
+  entry, but consumers must still map by key rather than position.
+- For observed **per-word romanization**, every ordinary romanization
+  span has the exact `begin`/`end` pair of its corresponding body lyric
+  span. The span text is replaced with its romanized reading. Do not
+  redistribute or independently retime it.
+- Romanization whitespace is its own alignment syntax. In the Korean
+  samples, a single space can separate romanization spans within one
+  original Korean word, while a double space marks an original word
+  boundary. This differs from body lyric spacing (§8). Preserve every
+  whitespace character exactly; never run generic whitespace cleanup on
+  a transliteration track.
+- x-bg is mirrored at the same structural position. Its wrapper still has
+  no `begin`/`end`; in per-word romanization its inner spans retain the
+  body background spans' exact timings. A translation's x-bg, by contrast,
+  is untimed direct text.
+- Apple also supports **per-line romanization**, but no official per-line
+  sample is currently bundled and Apple has not documented the exact XML
+  shape clearly enough to reconstruct it safely. Preserve such a track if
+  encountered; do not convert between line and word granularity or invent
+  a per-line serialization without a verified source.
 
 ---
 
@@ -305,16 +389,16 @@ Observed attribute shapes across the official corpus:
 
 ```
 no attributes                             (7 — untimed)
-begin end                                (9 occurrences)
-begin end itunes:songPart                (29)
-begin end itunes:songPart ttm:agent      (17)
+begin end                                (21 occurrences)
+begin end itunes:songPart                (39)
+begin end itunes:songPart ttm:agent      (23)
 ```
 
 - For `itunes:timing="None"`, a section may be plain `<div>` with no
   attributes. Its purpose is still to group lyric lines; it carries no
   playback interval and no observed `itunes:songPart`.
 
-- **`itunes:songPart` is optional** — 9 of 55 timed official `<div>`s
+- **`itunes:songPart` is optional** — 21 of 83 timed official `<div>`s
   have none, and one whole timed file uses none at all. The observed
   untimed file has seven attribute-free `<div>`s.
 - **Note the attribute name: `itunes:songPart`, camelCase.** Apple's
@@ -330,12 +414,12 @@ begin end itunes:songPart ttm:agent      (17)
 
   | Value | Count | Notes |
   |---|---|---|
-  | `Verse` | 23 | |
-  | `Chorus` | 11 | |
-  | `PreChorus` | 4 | camelCase, no hyphen or space |
-  | `Bridge` | 3 | |
+  | `Verse` | 27 | |
+  | `Chorus` | 18 | |
+  | `PreChorus` | 7 | camelCase, no hyphen or space |
+  | `Bridge` | 4 | |
   | `Intro` | 3 | |
-  | `Outro` | 2 | |
+  | `Outro` | 3 | |
   | `Refrain` | 0 | valid, but rare — not yet seen in the wild |
   | `Instrumental` | 0 | valid, but rare — not yet seen in the wild |
 
@@ -364,7 +448,7 @@ Observed attribute shapes:
 no attributes                     (28 occurrences — untimed)
 begin end                        (95 occurrences — one line-synced file)
 begin end itunes:key             (47 — one line-synced file)
-begin end itunes:key ttm:agent   (273 — all 4 word/syllable files, plus 1 line-synced)
+begin end itunes:key ttm:agent   (464 — all 6 word/syllable files, plus 2 line-synced)
 ```
 
 The no-attribute shape identifies the observed untimed mode. The other
@@ -559,7 +643,7 @@ what the file already uses and match it exactly.** Do not assume one
 universal format, and do not convert a file from one style to another.
 
 - **Style A — bare seconds under a minute, `M:SS.mmm` at and above one
-  minute.** The dominant official style: 5 of the 7 timed official samples,
+  minute.** The dominant official style: 8 of the 10 timed official samples,
   including every word/syllable file.
   - Under 60s: `"14.630"`, `"0.138"`, `"58.272"` — no minutes prefix.
   - 60s and over: `"1:01.000"`, `"5:57.630"` — seconds zero-padded to
@@ -612,21 +696,63 @@ zero-padding, and the switch point if the file uses Style A.
 - A background-vocal part is a **nested wrapper span** containing its
   own sequence of word/syllable spans, which follow all the same spacing
   rules (§7–§8) independently.
-- **The official wrapper carries `ttm:role="x-bg"` and nothing else — no
-  `begin`, no `end`.** All 56 x-bg wrappers across the official corpus
+- **The body-lyric wrapper carries `ttm:role="x-bg"` and no timing — no
+  `begin`, no `end`.** All 71 body x-bg wrappers across the official corpus
   are exactly `<span ttm:role="x-bg">`. The timing lives entirely on the
   inner spans. (The AMLL editor adds `begin`/`end` to the wrapper — §12.)
-- **Placement: the x-bg wrapper comes after all of the main vocalist's
-  spans, at the end of the `<p>` content.** It is **not** interleaved
-  chronologically at the point where it actually occurs, even though its
-  inner timings may overlap earlier main-vocal spans. Verified on all 56
-  instances: not one is followed by further main-vocal content. Always
-  append it last.
-- A single literal space separates the last main-vocal span from the
-  opening `<span ttm:role="x-bg">` tag.
+- **Placement is source-dependent.** 63 observed body wrappers are last
+  inside `<p>`, while 8 in `OMG` are first; none are in the middle. Preserve
+  the position already authored. Do not move a leading x-bg to the end
+  merely to match the more common shape. The bundled Line-to-span heuristic
+  below deliberately appends newly inferred x-bg last because that is the
+  requested convenience convention, not a universal Apple constraint.
+- When x-bg is trailing, a single literal space normally separates the
+  last main-vocal span from the opening wrapper. When it is leading, its
+  closing wrapper is followed by the separator before the main lyric.
 - The text is conventionally wrapped in literal parentheses, `(`
   attached to the first inner span's text and `)` to the last — a
   display convention, not a structural requirement.
+
+### Line-to-span conversion heuristic for parentheticals
+
+When converting `itunes:timing="Line"` plain text to spans, balanced
+parenthetical text attached to a non-parenthetical main line is usually a
+background vocal. The bundled splitter therefore converts:
+
+```xml
+<p begin="10.000" end="14.000">Hello (yeah)</p>
+```
+
+to this structural shape (placeholder times abbreviated):
+
+```xml
+<p begin="10.000" end="14.000"><span begin="..." end="...">Hel</span><span begin="..." end="...">lo</span> <span ttm:role="x-bg"><span begin="..." end="...">(yeah)</span></span></p>
+```
+
+Rules:
+
+- Move each balanced top-level `(...)` segment into one x-bg wrapper at
+  the **end** of the `<p>`, even if it appeared in the middle of the
+  source line. Preserve its source-order timing; wrapper placement is
+  structural, not chronological.
+- If several parenthetical segments occur on one line, put all of them
+  in that one final wrapper, in source order, separated by one space.
+- Preserve the literal opening and closing parentheses in inner span
+  text. Whether a client hides them is the client's decision; the TTML
+  vendor must not strip them.
+- Put exactly one literal space between the last main-vocal `</span>`
+  and `<span ttm:role="x-bg">`.
+- Generate x-bg only when non-parenthetical main-vocal text also remains.
+  A line consisting entirely of parenthetical text is not an independent
+  x-bg line; keep it as ordinary main-vocal spans for manual editing.
+- If parentheses are unbalanced, do not guess. Keep the line ordinary
+  and report it for review.
+- Empty `()` does not identify a vocal. Keep a line containing it
+  ordinary rather than generating an empty-content x-bg.
+- Apply this heuristic only to literal round parentheses `(...)`.
+  Square `[...]` and curly `{...}` brackets remain ordinary lyric text.
+- This is a high-probability authoring heuristic, not a semantic truth:
+  manually review generated wrappers during the timing pass.
 - **Constraint matrix:**
 
   | Sync level | `ttm:agent` singers | `ttm:role="x-bg"` background vocals |
@@ -646,9 +772,9 @@ zero-padding, and the switch point if the file uses Style A.
 ## 11. Text content: quotes, apostrophes, and entities
 
 **Apple's official files use raw characters, not XML entities.** Across
-all eight official samples: **zero** occurrences of `&apos;`, `&quot;`,
-or `&amp;`, against 238 raw ASCII apostrophes (`'`), 11 typographic
-apostrophes (`’`), and 18 raw `"` in text content.
+all eleven official samples: **zero** occurrences of `&apos;`, `&quot;`,
+or `&amp;`, against 410 raw ASCII apostrophes (`'`), 11 typographic
+apostrophes (`’`), and 68 raw `"` in text content.
 
 ```xml
 <span begin="17.602" end="17.802">don't</span>
@@ -700,15 +826,14 @@ Apple-conformant. Comparing `amll_edited_ttml/` against
 | 4 | **`xmlns:amll="http://www.example.com/ns/amll"` declared** | Never declared — a placeholder namespace with no meaning to Apple Music |
 | 5 | **`itunes:songPart` stripped from every `<div>`** (0 across all three files) | Optional, but Apple emits it on most `<div>`s (§4) — once dropped, the section labels are unrecoverable without re-authoring |
 | 6 | **`begin`/`end` added to the `ttm:role="x-bg"` wrapper span** | Wrapper carries `ttm:role` only; timing lives on inner spans (§10) |
-| 7 | **`<translations/>` dropped** on span-synced output | Present on all eight official samples (§3) |
-| 8 | **`leadingSilence` dropped** from `<iTunesMetadata>` | Preserved when the source had it (§3) |
-| 9 | **Apostrophes escaped to `&apos;`** | Raw `'` (§11) |
-| 10 | **Namespace declaration order shuffled**, `itunes` last | `xmlns`, `xmlns:itunes`, `xmlns:ttm` (§2) — cosmetic |
-| 11 | **`<p>` attribute order** `begin end ttm:agent itunes:key` | `begin end itunes:key ttm:agent` (§5) — cosmetic |
+| 7 | **`leadingSilence` dropped** from `<iTunesMetadata>` | Preserved when the source had it (§3) |
+| 8 | **Apostrophes escaped to `&apos;`** | Raw `'` (§11) |
+| 9 | **Namespace declaration order shuffled**, `itunes` last | `xmlns`, `xmlns:itunes`, `xmlns:ttm` (§2) — cosmetic |
+| 10 | **`<p>` attribute order** `begin end ttm:agent itunes:key` | `begin end itunes:key ttm:agent` (§5) — cosmetic |
 
 Notes on using this table:
 
-- **Items 1–9 are substantive**; 10–11 are cosmetic and only worth
+- **Items 1–8 are substantive**; 9–10 are cosmetic and only worth
   touching if the goal is a byte-level match with Apple's style.
 - **Timing Style B is *not* a deviation.** Earlier revisions of this
   document listed the editor's always-padded `MM:SS.mmm` output as an
@@ -723,6 +848,11 @@ Notes on using this table:
   is actually conformant — it keeps `itunes:timing`, `xml:lang`, and
   `<translations/>`, and declares no stray namespaces. The deviations
   concentrate in span-synced output.
+- **AMLL does not inherently drop translations.** It supports authoring
+  them; the provided span-synced samples simply have none. Their missing
+  `<translations>` container is evidence only about those files, not proof
+  that translation content was deleted. Preserve any translation or
+  transliteration track found in AMLL output.
 - These are observations from three sample files, not a spec of the
   editor. A different AMLL version may deviate differently — when
   handling an unfamiliar file, check it against §2–§11 directly rather
@@ -744,8 +874,11 @@ this reference afterward so the same lookup is unnecessary next time.
 | `official_ttml_samples/line/9 to 5 (feat. khodi) - Lucidrari.ttml` | Line sync, Style C timing, no `itunes:key`, no `songPart`, no agents, single `<div>` for the whole song, `xml:lang` disagreeing with the lyric language |
 | `official_ttml_samples/line/How Long - Charlie Puth.ttml` | Line sync, Style A timing, `itunes:key` on every `<p>`, `songPart` on `<div>`s, no agents, raw `"` in text |
 | `official_ttml_samples/line/#icanteven … - The Neighbourhood.ttml` | **Line sync *with* agents** — `xmlns:ttm`, a `<ttm:agent>` carrying a `<ttm:name>`, `ttm:agent` on every `<p>`; Style B timing with stripped trailing zeros |
+| `official_ttml_samples/line/Not So Bad … - Rae Sremmurd.ttml` | Line sync with two self-closing person agents, `ttm:agent` assignments, song parts, and parenthetical background-vocal candidates |
 | `official_ttml_samples/word_syllable/10:35 - Tiesto & Tate McRae.ttml` | Single agent, mixed word/syllable granularity, 7 x-bg parts |
+| `official_ttml_samples/word_syllable/APT. - ROSE & Bruno Mars.ttml` | Subtitle translations plus complete per-word `ko-Latn` romanization; transliteration spans exactly reuse lyric timings |
 | `official_ttml_samples/word_syllable/Luther - Kendrick Lamar.ttml` | Four agents inc. `group`/`other`, `ttm:agent` on `<body>`, **80 multi-word spans** (§7), incidental double spaces |
+| `official_ttml_samples/word_syllable/OMG - NewJeans.ttml` | Subtitle translations, automatically-created per-word romanization, optional spatial `<audio>` metadata, and leading x-bg lines |
 | `official_ttml_samples/word_syllable/Popular … - The Weeknd & Madonna.ttml` | Five agents inc. `v3`, heaviest syllable splitting (186 zero-space joins), 22 x-bg parts |
 | `official_ttml_samples/word_syllable/You - Regard, Troye Sivan & Tate McRae.ttml` | Four agents, `ttm:agent` on `<body>`, 21 x-bg parts |
 | `amll_edited_ttml/line.ttml` | AMLL line output — conformant |
@@ -783,15 +916,16 @@ Before handing back any edited, generated, or converted TTML file:
       (§4) and still on `<div>`, not `<p>`.
 - [ ] Every `ttm:agent` referenced on `<body>`, `<div>`, or `<p>` is
       declared in `<head>`.
-- [ ] `ttm:role="x-bg"` spans are preserved, structurally intact, still
-      last within their `<p>`, and — for Apple-conformant output —
-      still free of `begin`/`end` on the wrapper.
+- [ ] `ttm:role="x-bg"` spans are preserved, structurally intact, in
+      their original leading/trailing position, and — for
+      Apple-conformant output — still free of `begin`/`end` on the wrapper.
 - [ ] Text content escaping matches the file's existing convention (raw
       `'` for Apple files), with entities neither corrupted, double-
       escaped, nor decoded into raw `<`/`&`.
-- [ ] `<translations/>`, `leadingSilence`, `<songwriters>`, and the
-      rest of `<head>` are untouched unless the task required changing
-      them.
+- [ ] `<translations>`, `<transliterations>`, optional `<audio>`,
+      `leadingSilence`, `<songwriters>`, and the rest of `<head>` are
+      untouched unless the task required changing them. Every metadata
+      `<text for="L…">` still resolves to an existing `itunes:key`.
 - [ ] For timed files, the existing timing-format style (§9) is matched,
       not replaced with a different one. For `"None"`, no timestamps or
       `dur` were fabricated.
